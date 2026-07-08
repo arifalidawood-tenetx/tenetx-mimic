@@ -1,1 +1,194 @@
 @import "tailwindcss";
+
+/* Allow a `dark:` escape hatch without coupling components to mode logic.
+   In practice components consume semantic tokens only. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* ──────────────────────────────────────────────────────────────────────────
+   DESIGN TOKENS — single source of truth. Ported verbatim from
+   tenetx-qa-scoring/web-ui/src/index.css so components shared with that app
+   (AuthGate, ui.tsx, icons.tsx) render identically.
+   color-scheme is driven by [data-theme] on <html>. All chromatic values are
+   expressed with light-dark(), so ONLY color values swap between modes —
+   there is never mode-conditional logic inside components.
+   Dark is primary: soft #0A base, surfaces stepped 3–6% lighter (elevation). */
+:root {
+  color-scheme: light dark;
+
+  /* Stepped surfaces — each layer slightly lighter than its parent. */
+  --surface-0: light-dark(#f4f5f7, #0a0c11); /* app canvas */
+  --surface-1: light-dark(#ffffff, #0e1117); /* cards */
+  --surface-2: light-dark(#ffffff, #14181f); /* nested / table heads */
+  --surface-3: light-dark(#fbfbfd, #1a1f28); /* inset panels */
+  --surface-overlay: light-dark(#ffffff, #20262f); /* drawer / popover */
+
+  /* Per-mode tuned ink — lighter weights/contrast on dark. */
+  --ink: light-dark(#13161c, #e9ecf2);
+  --ink-muted: light-dark(#565d68, #98a1b0);
+  /* tuned to clear 4.5:1 even at the tertiary/meta level, per mode */
+  --ink-faint: light-dark(#6b7280, #7b828d);
+
+  /* Hairline edges (used sparingly — elevation does the work in dark). */
+  --line: light-dark(#e7e9ee, rgba(255, 255, 255, 0.08));
+  --line-strong: light-dark(#d3d7de, rgba(255, 255, 255, 0.14));
+
+  /* Status colours — tuned independently per mode for contrast. */
+  --success: light-dark(#0c8a5a, #34d399);
+  --warning: light-dark(#b4690a, #fbbf24);
+  --danger: light-dark(#cf2738, #f87171);
+
+  /* The single interactive accent (deliberately not purple). */
+  --accent: light-dark(#1769d6, #41a6ff);
+
+  /* Soft tints derived from the tokens above (no duplicated hex). */
+  --success-soft: color-mix(in srgb, var(--success) 14%, transparent);
+  --warning-soft: color-mix(in srgb, var(--warning) 16%, transparent);
+  --danger-soft: color-mix(in srgb, var(--danger) 14%, transparent);
+  --accent-soft: color-mix(in srgb, var(--accent) 15%, transparent);
+
+  /* Elevation shadows — soft in dark, hairline drop in light. */
+  --shadow-sm: light-dark(0 1px 2px rgb(17 20 26 / 0.06), 0 1px 0 rgb(0 0 0 / 0.4));
+  --shadow-md: light-dark(0 4px 14px rgb(17 20 26 / 0.08), 0 10px 30px rgb(0 0 0 / 0.4));
+  --shadow-lg: light-dark(0 18px 50px rgb(17 20 26 / 0.16), 0 24px 70px rgb(0 0 0 / 0.55));
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+/* Map semantic variables into Tailwind's token namespace so components get
+   utilities like bg-card, text-ink, stroke-success, ring-accent. */
+@theme inline {
+  --color-bg: var(--surface-0);
+  --color-card: var(--surface-1);
+  --color-card-2: var(--surface-2);
+  --color-card-3: var(--surface-3);
+  --color-overlay: var(--surface-overlay);
+
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-ink-faint: var(--ink-faint);
+
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-accent: var(--accent);
+
+  --color-success-soft: var(--success-soft);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger-soft: var(--danger-soft);
+  --color-accent-soft: var(--accent-soft);
+
+  --color-on-accent: var(--on-accent);
+}
+
+/* Static (non-inline) tokens: typography + motion. */
+@theme {
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@layer base {
+  /* Default edge colour so `border` utilities read on-brand in both modes. */
+  *,
+  ::before,
+  ::after {
+    border-color: var(--line);
+  }
+
+  html {
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    background-color: var(--surface-0);
+    color: var(--ink);
+    /* Type tuned for dark: slightly looser leading, darker weights read heavier. */
+    font-feature-settings: "cv01", "ss01";
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--accent) 28%, transparent);
+    color: var(--ink);
+  }
+
+  /* Data numerals align in tables / scores. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+
+  /* Refined, mode-aware scrollbars. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: var(--line-strong);
+    border-radius: 9999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+
+  /* Accessible focus ring driven by the accent token. */
+  .focus-ring {
+    outline: none;
+  }
+  .focus-ring:focus-visible {
+    box-shadow: 0 0 0 2px var(--surface-0), 0 0 0 4px var(--accent);
+  }
+}
+
+@layer utilities {
+  .animate-rise {
+    animation: rise 0.4s var(--ease-spring) both;
+  }
+  .animate-fade {
+    animation: fade 0.3s ease both;
+  }
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+}
+
+/* Respect reduced motion globally — no count-ups or transitions for those users. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
