@@ -1,5 +1,5 @@
 {
-  "name": "saml-proxy",
+  "name": "tenetx-mimic-backend",
   "version": "1.0.0",
   "description": "SAML metadata verification proxy for tenetx-mimic",
   "main": "dist/index.js",

@@ -2,13 +2,29 @@ import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import { initializeApp, refreshToken } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
+import { writeFileSync, mkdirSync } from 'fs';
+import { join, dirname, resolve } from 'path';
+import { fileURLToPath } from 'url';
 import { parseSamlMetadata, isAllowedMetadataHost } from './samlMetadata.js';
 
-const app = express();
+// Exported so tests can mount the app on an ephemeral port (see test/acs.test.ts);
+// the module-level app.listen() below is guarded to only run when executed
+// directly, never on import.
+export const app = express();
 const port = process.env.PORT || 3000;
+
+// Package root, resolved relative to this module so it is correct whether run
+// from src/ (tsx/vitest) or dist/ (compiled) — both sit one level under the
+// package root. Used to anchor the .captured/ SAML-capture directory.
+const packageRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 // Parse JSON bodies
 app.use(express.json());
+
+// Parse application/x-www-form-urlencoded bodies. Required for POST /saml/acs:
+// during a real SAML login Keycloak POSTs the SAMLResponse as a urlencoded form
+// field, not as JSON.
+app.use(express.urlencoded({ extended: true }));
 
 // CORS middleware - allowlist only the deployed mimic Hosting origin
 const allowedOrigin = process.env.ALLOWED_ORIGIN || 'https://tenetx-mimic.web.app';
@@ -170,5 +186,5 @@ app.post(
 
 // Start server
 app.listen(port, () => {
-  console.log(`saml-proxy listening on port ${port}`);
+  console.log(`tenetx-mimic-backend listening on port ${port}`);
 });
