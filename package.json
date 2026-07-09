@@ -8,11 +8,15 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "seed:ten135": "tsx scripts/seed-ten135-attempt.ts"
+    "seed:ten135": "tsx scripts/seed-ten135-attempt.ts",
+    "seed:ten135:admin": "tsx scripts/seed-ten135-admin.ts"
   },
   "dependencies": {
+    "@google-cloud/firestore": "^8.6.0",
     "clsx": "2.1.1",
     "firebase": "^12.15.0",
+    "firebase-admin": "^14.1.0",
+    "google-auth-library": "^10.9.0",
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "react-router-dom": "^7.18.1",
@@ -30,6 +34,7 @@
     "@vitejs/plugin-react": "5.1.1",
     "jsdom": "^23.2.0",
     "tailwindcss": "4.1.17",
+    "tsx": "^4.23.0",
     "typescript": "5.9.3",
     "vite": "7.3.2",
     "vitest": "^1.6.1"
