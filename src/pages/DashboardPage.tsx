@@ -91,8 +91,12 @@ export function DashboardPage() {
         const snapshot = await getDocs(collection(db, "mimic_features"));
         if (cancelled) return;
         setFeatures(snapshot.docs.map((doc) => toMimicFeature(doc.id, doc.data())));
-      } catch {
-        if (!cancelled) setError("Could not load mimic_features from Firestore.");
+      } catch (err) {
+        console.error("mimic_features load failed:", err);
+        if (!cancelled) {
+          const message = err instanceof Error ? err.message : String(err);
+          setError(`Could not load mimic_features from Firestore: ${message}`);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
