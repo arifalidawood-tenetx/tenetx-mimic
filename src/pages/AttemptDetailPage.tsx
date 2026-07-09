@@ -67,18 +67,19 @@ export function AttemptDetailPage() {
           where("featureSlug", "==", feature),
           where("attemptNumber", "==", attemptNumber)
         );
-        const snapshot = await getDocs(q);
-        if (!active) return;
-        if (snapshot.empty) {
-          setNotFound(true);
-        } else {
-          setDoc(snapshot.docs[0].data() as MimicFeatureDoc);
-        }
-      } catch {
-        if (active) setNotFound(true);
-      } finally {
-        if (active) setLoading(false);
-      }
+       const snapshot = await getDocs(q);
+         if (!active) return;
+         if (snapshot.empty) {
+           setNotFound(true);
+         } else {
+           setDoc(snapshot.docs[0].data() as MimicFeatureDoc);
+         }
+       } catch (err) {
+         console.error("mimic_features query failed:", err);
+         if (active) setNotFound(true);
+       } finally {
+         if (active) setLoading(false);
+       }
     }
 
     void run();

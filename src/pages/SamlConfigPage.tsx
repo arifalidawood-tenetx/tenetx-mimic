@@ -23,9 +23,10 @@ function inferIdpType(metadataUrl: string): IdpType | undefined {
     const hostname = new URL(metadataUrl).hostname;
     if (hostname === "keycloak.arifalidawood.com") return "keycloak";
     if (hostname === "authentik.arifalidawood.com") return "authentik";
-  } catch {
+  } catch (err) {
     // Not a valid absolute URL (e.g. empty string from the Upload-XML path) —
     // fall through to undefined.
+    console.error("inferIdpType parse failed:", err);
   }
   return undefined;
 }
@@ -55,7 +56,8 @@ function parseMetadataXmlClient(xmlString: string): VerifiedMetadata | null {
 
     if (!entityId && !ssoUrl && !certificate) return null;
     return { entity_id: entityId, sso_url: ssoUrl, certificate };
-  } catch {
+  } catch (err) {
+    console.error("parseMetadataXmlClient failed:", err);
     return null;
   }
 }
@@ -101,12 +103,14 @@ export function SamlConfigPage() {
         setTestError(body.error ?? `Verification failed (HTTP ${response.status})`);
         return;
       }
-      setResult(await response.json());
-    } catch {
-      setTestError("Could not reach the saml-proxy service.");
-    } finally {
-      setTesting(false);
-    }
+       setResult(await response.json());
+     } catch (err) {
+       console.error("saml-proxy verify-metadata request failed:", err);
+       const message = err instanceof Error ? err.message : String(err);
+       setTestError(`Could not reach the saml-proxy service: ${message}`);
+     } finally {
+       setTesting(false);
+     }
   }
 
   async function handleFileUpload(file: File) {
