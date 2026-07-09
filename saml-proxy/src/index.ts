@@ -1,7 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import * as admin from 'firebase-admin';
-import { parseSamlMetadata, isAllowedMetadataHost } from './samlMetadata';
+import { parseSamlMetadata, isAllowedMetadataHost } from './samlMetadata.js';
 
 const app = express();
 const port = process.env.PORT || 3000;
