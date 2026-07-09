@@ -160,7 +160,7 @@ export function AttemptDetailPage() {
         </div>
       )}
 
-      {feature === "saml-login-fix" && (
+      {(feature === "saml-login-fix" || feature === "windows-server-managed-hook-fix") && (
         <div className="border-t border-line pt-6 space-y-4">
           {doc.rootCause && (
             <div className="space-y-1">

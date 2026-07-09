@@ -212,6 +212,44 @@ describe("AttemptDetailPage", () => {
     await screen.findByRole("button", { name: "Copied!" });
   });
 
+  it("renders root cause, diff summary, and the full solution when feature is windows-server-managed-hook-fix", async () => {
+    mockGetDocs.mockResolvedValue({
+      empty: false,
+      docs: [
+        {
+          data: () => ({
+            ...FIXTURE_DOC,
+            featureSlug: "windows-server-managed-hook-fix",
+            rootCause:
+              "server_hook_command builds a POSIX-only invocation with zero platform branching.",
+            diffSummary:
+              "Added server_hook_command_by_platform with a Windows-native PowerShell variant.",
+            solutionMarkdown: "## Fix\n\n```\nserver_hook_command_by_platform[\"windows\"]\n```",
+          }),
+        },
+      ],
+    });
+
+    renderAt("/mimic/TENQA-17/windows-server-managed-hook-fix/1");
+
+    await waitFor(() => expect(screen.getByText("Root cause")).toBeInTheDocument());
+    expect(
+      screen.getByText(
+        "server_hook_command builds a POSIX-only invocation with zero platform branching."
+      )
+    ).toBeInTheDocument();
+    expect(screen.getByText("Diff summary")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Added server_hook_command_by_platform with a Windows-native PowerShell variant."
+      )
+    ).toBeInTheDocument();
+    expect(screen.getByText("Full solution")).toBeInTheDocument();
+    const pre = screen.getByText((_, node) => node?.tagName.toLowerCase() === "pre");
+    expect(pre).toBeInTheDocument();
+    expect(pre.textContent).toContain('server_hook_command_by_platform["windows"]');
+  });
+
   it("does not crash and renders no saml-login-fix fields when they are undefined", async () => {
     mockGetDocs.mockResolvedValue({
       empty: false,
