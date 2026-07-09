@@ -7,23 +7,19 @@ import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { parseSamlMetadata, isAllowedMetadataHost } from './samlMetadata.js';
 
-// Exported so tests can mount the app on an ephemeral port (see test/acs.test.ts);
-// the module-level app.listen() below is guarded to only run when executed
-// directly, never on import.
+// Exported for tests (mounted on an ephemeral port); the app.listen() at the
+// bottom is guarded to run only when this module is executed directly.
 export const app = express();
 const port = process.env.PORT || 3000;
 
-// Package root, resolved relative to this module so it is correct whether run
-// from src/ (tsx/vitest) or dist/ (compiled) — both sit one level under the
-// package root. Used to anchor the .captured/ SAML-capture directory.
+// Anchors the .captured/ dir to the package root. src/ (tsx/vitest) and dist/
+// (compiled) both sit one level below it, so '..' is correct in either case.
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 // Parse JSON bodies
 app.use(express.json());
 
-// Parse application/x-www-form-urlencoded bodies. Required for POST /saml/acs:
-// during a real SAML login Keycloak POSTs the SAMLResponse as a urlencoded form
-// field, not as JSON.
+// Keycloak POSTs the SAMLResponse to /saml/acs as urlencoded form data, not JSON.
 app.use(express.urlencoded({ extended: true }));
 
 // CORS middleware - allowlist only the deployed mimic Hosting origin
@@ -184,7 +180,65 @@ app.post(
   }
 );
 
-// Start server
-app.listen(port, () => {
-  console.log(`tenetx-mimic-backend listening on port ${port}`);
+// POST /saml/acs: UNAUTHENTICATED SAML ACS capture endpoint. During a real SAML
+// login Keycloak POSTs a signed SAMLResponse here and cannot send a Firebase ID
+// token, so this route intentionally has NO authMiddleware. Its only job is to
+// persist the raw base64 response for a later read-only harness — it never parses,
+// validates, or interprets the SAMLResponse.
+app.post('/saml/acs', (req: Request, res: Response) => {
+  const samlResponse = req.body?.SAMLResponse;
+  if (typeof samlResponse !== 'string' || !samlResponse) {
+    res.status(400).json({ error: 'SAMLResponse is required' });
+    return;
+  }
+
+  const capturedAt = new Date().toISOString();
+  const capturedDir = join(packageRoot, '.captured');
+  const filePath = join(
+    capturedDir,
+    `saml-response-${capturedAt.replace(/[:.]/g, '-')}.txt`
+  );
+
+  try {
+    mkdirSync(capturedDir, { recursive: true });
+    writeFileSync(filePath, `# captured ${capturedAt} (UTC)\n${samlResponse}\n`, 'utf-8');
+  } catch (error) {
+    console.error('Failed to persist captured SAMLResponse:', error);
+    res.status(500).json({ error: 'failed to persist SAMLResponse' });
+    return;
+  }
+
+  // Decode + print the XML so a human can watch the capture live during the
+  // manual login. Buffer is built-in; the /></g split puts one element per line
+  // for readability. Best-effort — a decode failure must not fail a capture that
+  // already succeeded on disk above.
+  try {
+    const xml = Buffer.from(samlResponse, 'base64').toString('utf-8');
+    console.log(`\n=== SAMLResponse captured -> ${filePath} ===`);
+    console.log(xml.replace(/></g, '>\n<'));
+    console.log('=== end SAMLResponse ===\n');
+  } catch (error) {
+    console.warn('Could not base64-decode SAMLResponse for console preview:', error);
+  }
+
+  res
+    .status(200)
+    .type('html')
+    .send(
+      '<!doctype html><html><body><h1>SAMLResponse captured</h1>' +
+        '<p>check <code>.captured/</code></p></body></html>'
+    );
 });
+
+// Start the server only when run directly (node dist/index.js or tsx src/index.ts),
+// never when imported by tests. Paths are resolved + normalized so a relative
+// argv[1] still matches this module's absolute path on both Windows and POSIX.
+const normalizePath = (p: string) => resolve(p).replace(/\\/g, '/').toLowerCase();
+const isMain =
+  !!process.argv[1] &&
+  normalizePath(process.argv[1]) === normalizePath(fileURLToPath(import.meta.url));
+if (isMain) {
+  app.listen(port, () => {
+    console.log(`tenetx-mimic-backend listening on port ${port}`);
+  });
+}
