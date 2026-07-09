@@ -10,7 +10,8 @@
     "test": "vitest run",
     "seed:ten135": "tsx scripts/seed-ten135-attempt.ts",
     "seed:ten135:admin": "tsx scripts/seed-ten135-admin.ts",
-    "seed:ten141:admin": "tsx scripts/seed-ten141-admin.ts"
+    "seed:ten141:admin": "tsx scripts/seed-ten141-admin.ts",
+    "seed:tenqa17:admin": "tsx scripts/seed-tenqa17-admin.ts"
   },
   "dependencies": {
     "@google-cloud/firestore": "^8.6.0",
