@@ -1,6 +1,8 @@
 import { useRef, useState } from "react";
+import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { Badge, Button, Segmented } from "@/components/ui";
 import { useAuthState } from "@/lib/authState";
+import { db } from "@/lib/firebaseClient";
 
 type Tab = "url" | "upload";
 
@@ -8,6 +10,24 @@ interface VerifiedMetadata {
   entity_id: string;
   sso_url: string;
   certificate: string;
+}
+
+type IdpType = "keycloak" | "authentik";
+
+// Infers the IdP type from the metadata URL's hostname (per todo 7's
+// firestore.rules field set). Unknown hostnames intentionally omit the
+// field rather than guessing — the rules only require the KEY be present
+// once a real value is known, and a wrong guess is worse than no value.
+function inferIdpType(metadataUrl: string): IdpType | undefined {
+  try {
+    const hostname = new URL(metadataUrl).hostname;
+    if (hostname === "keycloak.arifalidawood.com") return "keycloak";
+    if (hostname === "authentik.arifalidawood.com") return "authentik";
+  } catch {
+    // Not a valid absolute URL (e.g. empty string from the Upload-XML path) —
+    // fall through to undefined.
+  }
+  return undefined;
 }
 
 // Client-side reimplementation of the metadata-XML parse used by the
@@ -50,6 +70,9 @@ export function SamlConfigPage() {
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<VerifiedMetadata | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [savedId, setSavedId] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function handleTestConnection() {
@@ -60,6 +83,8 @@ export function SamlConfigPage() {
     setUrlError(null);
     setTestError(null);
     setResult(null);
+    setSavedId(null);
+    setSaveError(null);
     setTesting(true);
     try {
       const idToken = await user?.getIdToken();
@@ -87,6 +112,8 @@ export function SamlConfigPage() {
   async function handleFileUpload(file: File) {
     setTestError(null);
     setResult(null);
+    setSavedId(null);
+    setSaveError(null);
     const xml = await file.text();
     const parsed = parseMetadataXmlClient(xml);
     if (!parsed) {
@@ -94,6 +121,31 @@ export function SamlConfigPage() {
       return;
     }
     setResult(parsed);
+  }
+
+  async function handleSave() {
+    if (!result) return;
+    setSaveError(null);
+    setSaving(true);
+    try {
+      const idpType = inferIdpType(metadataUrl);
+      const payload: Record<string, unknown> = {
+        provider: "saml",
+        entity_id: result.entity_id,
+        sso_url: result.sso_url,
+        certificate: result.certificate,
+        metadataUrl,
+        verifiedAt: serverTimestamp(),
+        createdAt: serverTimestamp(),
+      };
+      if (idpType) payload.idpType = idpType;
+      const docRef = await addDoc(collection(db, "mimic_idp_connections"), payload);
+      setSavedId(docRef.id);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Failed to save configuration.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -187,6 +239,18 @@ export function SamlConfigPage() {
               </dd>
             </div>
           </dl>
+
+          <div className="flex items-center gap-2 pt-2">
+            <Button variant="primary" onClick={handleSave} disabled={saving || !!savedId}>
+              {saving ? "Saving…" : savedId ? "Saved" : "Save Configuration"}
+            </Button>
+            {savedId && <Badge tone="success">Saved (doc: {savedId})</Badge>}
+          </div>
+          {saveError && (
+            <p role="alert" className="text-sm text-danger">
+              {saveError}
+            </p>
+          )}
         </div>
       )}
 
