@@ -31,3 +31,14 @@ dist-ssr
 # Firebase deploy cache
 .firebase/
 firebase-debug.log
+
+# TEN-141 SAML harness: NEVER commit real captured SAMLResponses (signed token + PII).
+# Only synthetic/redacted fixtures (e.g. harness/fixtures/synthetic-unsigned.xml) are safe.
+harness/fixtures/*.captured.txt
+harness/fixtures/*.captured.xml
+harness/.captured/
+
+# Python bytecode from the harness / its tests
+__pycache__/
+*.pyc
+.pytest_cache/

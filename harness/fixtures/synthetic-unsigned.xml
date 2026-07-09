@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SYNTHETIC, DELIBERATELY-UNSIGNED SAML 2.0 Response fixture.
+
+  Purpose: exercise the TEN-141 harness error-handling path WITHOUT needing a
+  real captured Keycloak response yet (Wave 1). It contains NO real signature
+  (<ds:Signature> is intentionally absent) and NO real PII - every value is a
+  made-up *.invalid placeholder. Safe to commit. Never use as a real assertion.
+
+  The <samlp:Response Destination="..."> below carries the REAL product ACS
+  path (/api/saml/acs) on purpose: the harness reads Destination straight from
+  this element to derive saml_acs_url / http_host / script_name, so it proves
+  the "never hard-code the ACS path" behaviour end to end. To simulate the
+  mimic app's mistaken advertisement of /saml/acs, just edit the Destination
+  below - the harness will follow whatever this attribute says.
+
+  Because the message is unsigned and the real SP settings set
+  wantMessagesSigned=True (tenetx-source-code-dontpush/tenetx/auth/providers/
+  saml.py:157), python3-saml rejects it and SAMLProvider raises
+  SAMLValidationError with a "... | Reason: <reason>" message - which is the
+  exact path this fixture is here to test.
+
+  Timestamps are pinned far in the future (NotOnOrAfter=2099) so assertion
+  timing always passes and the signature check is the deterministic failure.
+-->
+<samlp:Response
+    xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+    xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+    ID="_synthetic-response-00000000000000000000000000000001"
+    Version="2.0"
+    IssueInstant="2099-01-01T00:00:00Z"
+    Destination="https://app.tenetx.ai/api/saml/acs">
+  <saml:Issuer>https://synthetic-keycloak-idp.invalid/realms/tenetx-mimic</saml:Issuer>
+  <samlp:Status>
+    <samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/>
+  </samlp:Status>
+  <saml:Assertion
+      ID="_synthetic-assertion-0000000000000000000000000000001"
+      Version="2.0"
+      IssueInstant="2099-01-01T00:00:00Z">
+    <saml:Issuer>https://synthetic-keycloak-idp.invalid/realms/tenetx-mimic</saml:Issuer>
+    <saml:Subject>
+      <saml:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress">test.user@synthetic-harness.invalid</saml:NameID>
+      <saml:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer">
+        <saml:SubjectConfirmationData NotOnOrAfter="2099-01-01T00:00:00Z" Recipient="https://app.tenetx.ai/api/saml/acs"/>
+      </saml:SubjectConfirmation>
+    </saml:Subject>
+    <saml:Conditions NotBefore="2020-01-01T00:00:00Z" NotOnOrAfter="2099-01-01T00:00:00Z">
+      <saml:AudienceRestriction>
+        <saml:Audience>https://app.tenetx.ai/saml/metadata</saml:Audience>
+      </saml:AudienceRestriction>
+    </saml:Conditions>
+    <saml:AuthnStatement AuthnInstant="2099-01-01T00:00:00Z" SessionIndex="_synthetic-session-0001">
+      <saml:AuthnContext>
+        <saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport</saml:AuthnContextClassRef>
+      </saml:AuthnContext>
+    </saml:AuthnStatement>
+    <saml:AttributeStatement>
+      <saml:Attribute Name="email" NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:basic">
+        <saml:AttributeValue>test.user@synthetic-harness.invalid</saml:AttributeValue>
+      </saml:Attribute>
+      <saml:Attribute Name="firstName" NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:basic">
+        <saml:AttributeValue>Synthetic</saml:AttributeValue>
+      </saml:Attribute>
+      <saml:Attribute Name="lastName" NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:basic">
+        <saml:AttributeValue>Harness</saml:AttributeValue>
+      </saml:Attribute>
+    </saml:AttributeStatement>
+  </saml:Assertion>
+</samlp:Response>
