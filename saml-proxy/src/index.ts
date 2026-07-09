@@ -1,6 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import * as admin from 'firebase-admin';
+import { parseSamlMetadata, isAllowedMetadataHost } from './samlMetadata';
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -99,13 +100,53 @@ app.get('/health', (req: Request, res: Response) => {
   res.status(200).json({ status: 'ok' });
 });
 
-// Stub POST /verify-metadata route (requires auth)
-// Logic will be filled in by todo 9
+// POST /verify-metadata: fetch + parse real IdP SAML metadata server-side
+// (browsers can't do this themselves, no CORS on IdP metadata endpoints).
 app.post(
   '/verify-metadata',
   authMiddleware,
-  (req: AuthenticatedRequest, res: Response) => {
-    res.status(501).json({ error: 'not implemented' });
+  async (req: AuthenticatedRequest, res: Response) => {
+    const { metadataUrl } = req.body ?? {};
+    if (typeof metadataUrl !== 'string' || !metadataUrl) {
+      res.status(400).json({ error: 'metadataUrl is required' });
+      return;
+    }
+
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(metadataUrl);
+    } catch {
+      res.status(400).json({ error: 'metadataUrl is not a valid URL' });
+      return;
+    }
+
+    // Host allowlist checked before any fetch happens (SSRF guard).
+    if (!isAllowedMetadataHost(parsedUrl.hostname)) {
+      res.status(403).json({ error: `host not allowlisted: ${parsedUrl.hostname}` });
+      return;
+    }
+
+    let xml: string;
+    try {
+      const response = await fetch(parsedUrl.toString());
+      if (!response.ok) {
+        res.status(502).json({ error: `metadata fetch failed: ${response.status}` });
+        return;
+      }
+      xml = await response.text();
+    } catch (error) {
+      console.error('Metadata fetch failed:', error);
+      res.status(502).json({ error: 'failed to fetch metadata' });
+      return;
+    }
+
+    const result = parseSamlMetadata(xml);
+    if (!result) {
+      res.status(422).json({ error: 'failed to parse SAML metadata' });
+      return;
+    }
+
+    res.status(200).json(result);
   }
 );
 

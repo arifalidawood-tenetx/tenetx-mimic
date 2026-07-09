@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Hand-built placeholder fixture (todo 9). Shaped like a real Keycloak realm SAML
+  IdP descriptor from GET /realms/tenetx-mimic/protocol/saml/descriptor. Replace
+  with a live-fetched copy once todo 10 creates the real "tenetx-mimic" realm.
+-->
+<md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata"
+    entityID="https://keycloak.arifalidawood.com/realms/tenetx-mimic">
+  <md:IDPSSODescriptor WantAuthnRequestsSigned="false"
+      protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+    <md:KeyDescriptor use="signing">
+      <ds:KeyInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+        <ds:X509Data>
+          <ds:X509Certificate>MIICmzCCAYMCBgFPlaceholderKeycloakFixtureCertDoNotUseInProd1234567890abcdefgh</ds:X509Certificate>
+        </ds:X509Data>
+      </ds:KeyInfo>
+    </md:KeyDescriptor>
+    <md:SingleLogoutService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
+        Location="https://keycloak.arifalidawood.com/realms/tenetx-mimic/protocol/saml"/>
+    <md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+        Location="https://keycloak.arifalidawood.com/realms/tenetx-mimic/protocol/saml"/>
+    <md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
+        Location="https://keycloak.arifalidawood.com/realms/tenetx-mimic/protocol/saml"/>
+  </md:IDPSSODescriptor>
+</md:EntityDescriptor>
