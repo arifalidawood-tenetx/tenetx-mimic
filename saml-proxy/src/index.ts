@@ -52,6 +52,10 @@ if (!firebaseRefreshToken) {
         client_secret: FIREBASE_TOOLS_CLIENT_SECRET,
         refresh_token: firebaseRefreshToken,
       }),
+      // Required: verifyIdToken() needs to know which project's tokens to
+      // accept. A refresh-token credential (unlike a cert credential) has no
+      // project baked in, so this must be set explicitly.
+      projectId: 'tenetx-qa-scores',
     });
   } catch (error) {
     console.error('Failed to initialize Firebase Admin SDK:', error);
