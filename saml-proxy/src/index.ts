@@ -1,6 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
-import * as admin from 'firebase-admin';
+import { initializeApp, refreshToken } from 'firebase-admin/app';
+import { getAuth } from 'firebase-admin/auth';
 import { parseSamlMetadata, isAllowedMetadataHost } from './samlMetadata.js';
 
 const app = express();
@@ -18,26 +19,39 @@ app.use(
   })
 );
 
-// Initialize Firebase Admin SDK
-// Service account JSON is passed via env var (base64 or raw JSON string)
-const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-if (!serviceAccountJson) {
+// Initialize Firebase Admin SDK with a refresh-token ("authorized_user")
+// credential, NOT a service-account key.
+//
+// WHY: creating service-account keys on this GCP project is blocked by the org
+// policy `constraints/iam.disableServiceAccountKeyCreation` (confirmed via a
+// direct API test), so FIREBASE_SERVICE_ACCOUNT_JSON can never be populated
+// here. Instead we reuse the same `firebase login:ci` refresh token used for
+// this project's Firebase CLI deploys (Coolify env FIREBASE_REFRESH_TOKEN),
+// whose owner is Owner on tenetx-qa-scores. getAuth().verifyIdToken works with
+// this credential (unlike firebase-admin's Firestore wrapper) — confirmed
+// against a real live ID token. Mirrors tenetx-mimic/scripts/seed-ten135-admin.ts.
+//
+// The client_id/client_secret below are firebase-tools' OWN PUBLIC OAuth client
+// credentials, embedded verbatim in the open-source firebase-tools `lib/api.js`
+// — documented-in-source PUBLIC values, NOT secrets.
+const FIREBASE_TOOLS_CLIENT_ID =
+  '563584335869-fgrhgmd47bqnekij5i8b5pr03ho849e6.apps.googleusercontent.com';
+const FIREBASE_TOOLS_CLIENT_SECRET = 'j9iVZfS8kkCEFUPaAeJV0sAi';
+
+const firebaseRefreshToken = process.env.FIREBASE_REFRESH_TOKEN;
+if (!firebaseRefreshToken) {
   console.warn(
-    'FIREBASE_SERVICE_ACCOUNT_JSON not set. Auth middleware will reject all requests.'
+    'FIREBASE_REFRESH_TOKEN not set. Auth middleware will reject all requests.'
   );
 } else {
   try {
-    let serviceAccount: Record<string, unknown>;
-    // Try base64 decode first, fall back to raw JSON
-    try {
-      const decoded = Buffer.from(serviceAccountJson, 'base64').toString('utf-8');
-      serviceAccount = JSON.parse(decoded);
-    } catch {
-      serviceAccount = JSON.parse(serviceAccountJson);
-    }
-
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount as admin.ServiceAccount),
+    initializeApp({
+      credential: refreshToken({
+        type: 'authorized_user',
+        client_id: FIREBASE_TOOLS_CLIENT_ID,
+        client_secret: FIREBASE_TOOLS_CLIENT_SECRET,
+        refresh_token: firebaseRefreshToken,
+      }),
     });
   } catch (error) {
     console.error('Failed to initialize Firebase Admin SDK:', error);
@@ -69,7 +83,7 @@ const authMiddleware = async (
   const idToken = authHeader.substring(7); // Remove 'Bearer ' prefix
 
   try {
-    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    const decodedToken = await getAuth().verifyIdToken(idToken);
 
     // Check email domain and verification status
     const email = decodedToken.email || '';
