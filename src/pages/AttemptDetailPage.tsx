@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { collection, getDocs, query, where } from "firebase/firestore";
 import { db } from "@/lib/firebaseClient";
-import { Badge, Spinner, type Tone } from "@/components/ui";
+import { Badge, Button, Spinner, type Tone } from "@/components/ui";
 import { SamlConfigPage } from "./SamlConfigPage";
 
 /**
@@ -26,6 +26,9 @@ interface MimicFeatureDoc {
   sourceRefs?: string[];
   idpType?: string;
   notes?: string;
+  rootCause?: string; // root-cause classification writeup
+  diffSummary?: string; // short summary of the diff/fix applied
+  solutionMarkdown?: string; // rendered raw (no markdown renderer), copy-to-clipboard
 }
 
 const STATUS_TONE: Record<string, Tone> = {
@@ -51,6 +54,7 @@ export function AttemptDetailPage() {
   const [loading, setLoading] = useState(true);
   const [doc, setDoc] = useState<MimicFeatureDoc | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -153,6 +157,46 @@ export function AttemptDetailPage() {
       {feature === "saml-config" && (
         <div className="border-t border-line pt-6">
           <SamlConfigPage />
+        </div>
+      )}
+
+      {feature === "saml-login-fix" && (
+        <div className="border-t border-line pt-6 space-y-4">
+          {doc.rootCause && (
+            <div className="space-y-1">
+              <h2 className="text-sm font-semibold text-ink">Root cause</h2>
+              <p className="text-sm text-ink-muted">{doc.rootCause}</p>
+            </div>
+          )}
+
+          {doc.diffSummary && (
+            <div className="space-y-1">
+              <h2 className="text-sm font-semibold text-ink">Diff summary</h2>
+              <p className="text-sm text-ink-muted">{doc.diffSummary}</p>
+            </div>
+          )}
+
+          {doc.solutionMarkdown && (
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-ink">Full solution</h2>
+                <Button
+                  variant="subtle"
+                  size="sm"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(doc.solutionMarkdown ?? "");
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 2000);
+                  }}
+                >
+                  {copied ? "Copied!" : "Copy"}
+                </Button>
+              </div>
+              <pre className="overflow-auto whitespace-pre-wrap rounded-lg bg-card-2 p-3 text-xs text-ink ring-1 ring-line">
+                {doc.solutionMarkdown}
+              </pre>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { AttemptDetailPage } from "./AttemptDetailPage";
 
@@ -94,6 +94,68 @@ describe("AttemptDetailPage", () => {
     expect(screen.getByText(/Loading attempt/i)).toBeInTheDocument();
   });
 
+  it("renders root cause, diff summary, and the full solution in a <pre> with a copy button when solutionMarkdown is present", async () => {
+    mockGetDocs.mockResolvedValue({
+      empty: false,
+      docs: [
+        {
+          data: () => ({
+            ...FIXTURE_DOC,
+            featureSlug: "saml-login-fix",
+            rootCause: "Message-level signature required but Response was unsigned.",
+            diffSummary: "Set saml.server.signature=true on the Keycloak SAML client.",
+            solutionMarkdown: "## Fix\n\n```\nsaml.server.signature: true\n```",
+          }),
+        },
+      ],
+    });
+
+    renderAt("/mimic/TEN-141/saml-login-fix/1");
+
+    await waitFor(() => expect(screen.getByText("Root cause")).toBeInTheDocument());
+    expect(
+      screen.getByText("Message-level signature required but Response was unsigned.")
+    ).toBeInTheDocument();
+    expect(screen.getByText("Diff summary")).toBeInTheDocument();
+    expect(
+      screen.getByText("Set saml.server.signature=true on the Keycloak SAML client.")
+    ).toBeInTheDocument();
+
+    expect(screen.getByText("Full solution")).toBeInTheDocument();
+    const pre = screen.getByText((_, node) => node?.tagName.toLowerCase() === "pre");
+    expect(pre).toBeInTheDocument();
+    expect(pre.textContent).toContain("saml.server.signature: true");
+
+    expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
+  });
+
+  it("does not render the solution block (and does not crash) when solutionMarkdown is absent", async () => {
+    mockGetDocs.mockResolvedValue({
+      empty: false,
+      docs: [
+        {
+          data: () => ({
+            ...FIXTURE_DOC,
+            featureSlug: "saml-login-fix",
+            rootCause: undefined,
+            diffSummary: undefined,
+            solutionMarkdown: undefined,
+          }),
+        },
+      ],
+    });
+
+    renderAt("/mimic/TEN-141/saml-login-fix/1");
+
+    await waitFor(() =>
+      expect(screen.getByText("Generic SAML/OIDC Config Page")).toBeInTheDocument()
+    );
+    expect(screen.queryByText("Root cause")).not.toBeInTheDocument();
+    expect(screen.queryByText("Diff summary")).not.toBeInTheDocument();
+    expect(screen.queryByText("Full solution")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
+  });
+
   it("builds the query with the exact three where() clauses matching the URL params", async () => {
     mockGetDocs.mockResolvedValue({ empty: true, docs: [] });
 
@@ -106,5 +168,74 @@ describe("AttemptDetailPage", () => {
     expect(mockWhere).toHaveBeenNthCalledWith(1, "ticketId", "==", "TEN-135");
     expect(mockWhere).toHaveBeenNthCalledWith(2, "featureSlug", "==", "saml-config");
     expect(mockWhere).toHaveBeenNthCalledWith(3, "attemptNumber", "==", 1);
+  });
+
+  it("renders root cause, diff summary, and full solution when feature is saml-login-fix", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+
+    mockGetDocs.mockResolvedValue({
+      empty: false,
+      docs: [
+        {
+          data: () => ({
+            ...FIXTURE_DOC,
+            featureSlug: "saml-login-fix",
+            rootCause: "Keycloak SAML assertion signature was not validated.",
+            diffSummary: "Added signature verification before session creation.",
+            solutionMarkdown: "--- a/auth.ts\n+++ b/auth.ts\n+verifySignature(assertion);",
+          }),
+        },
+      ],
+    });
+
+    renderAt("/mimic/TEN-135/saml-login-fix/1");
+
+    await waitFor(() => expect(screen.getByText("Root cause")).toBeInTheDocument());
+    expect(
+      screen.getByText("Keycloak SAML assertion signature was not validated.")
+    ).toBeInTheDocument();
+    expect(screen.getByText("Diff summary")).toBeInTheDocument();
+    expect(
+      screen.getByText("Added signature verification before session creation.")
+    ).toBeInTheDocument();
+    expect(screen.getByText("Full solution")).toBeInTheDocument();
+
+    const pre = screen.getByText((_, node) => node?.tagName.toLowerCase() === "pre");
+    expect(pre).toHaveTextContent("verifySignature(assertion);");
+
+    const copyButton = screen.getByRole("button", { name: "Copy" });
+    fireEvent.click(copyButton);
+    expect(writeText).toHaveBeenCalledWith(
+      "--- a/auth.ts\n+++ b/auth.ts\n+verifySignature(assertion);"
+    );
+    await screen.findByRole("button", { name: "Copied!" });
+  });
+
+  it("does not crash and renders no saml-login-fix fields when they are undefined", async () => {
+    mockGetDocs.mockResolvedValue({
+      empty: false,
+      docs: [
+        {
+          data: () => ({
+            ...FIXTURE_DOC,
+            featureSlug: "saml-login-fix",
+            rootCause: undefined,
+            diffSummary: undefined,
+            solutionMarkdown: undefined,
+          }),
+        },
+      ],
+    });
+
+    renderAt("/mimic/TEN-135/saml-login-fix/1");
+
+    await waitFor(() =>
+      expect(screen.getByText("Generic SAML/OIDC Config Page")).toBeInTheDocument()
+    );
+    expect(screen.queryByText("Root cause")).not.toBeInTheDocument();
+    expect(screen.queryByText("Diff summary")).not.toBeInTheDocument();
+    expect(screen.queryByText("Full solution")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
   });
 });

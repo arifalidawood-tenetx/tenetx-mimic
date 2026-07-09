@@ -21,4 +21,7 @@ export interface MimicFeature {
   sourceRefs: string[];
   createdAt: string; // ISO 8601 timestamp
   updatedAt: string; // ISO 8601 timestamp
+  rootCause?: string; // root-cause classification writeup
+  diffSummary?: string; // short summary of the diff/fix applied
+  solutionMarkdown?: string; // rendered raw (no markdown renderer), copy-to-clipboard
 }
