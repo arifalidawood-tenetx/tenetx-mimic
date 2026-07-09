@@ -1,1 +1,15 @@
-{"projects":{"default":"tenetx-qa-scores"},"targets":{"tenetx-qa-scores":{"hosting":{"mimic":["tenetx-mimic"]}}}}
+{
+  "projects": {
+    "default": "tenetx-qa-scores"
+  },
+  "targets": {
+    "tenetx-qa-scores": {
+      "hosting": {
+        "mimic": [
+          "tenetx-mimic"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}
