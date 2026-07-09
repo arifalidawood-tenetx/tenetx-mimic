@@ -177,13 +177,27 @@ def _load_response(path: str) -> tuple[str, bytes]:
         _eprint(f"ERROR: fixture/response file is empty: {path}")
         sys.exit(EXIT_INPUT)
 
+    # Capture files (tenetx-mimic-backend/src/index.ts:204) prepend a
+    # "# captured <ts> (UTC)" header line; drop "#"-comment lines ("#" is not
+    # in the base64 alphabet) so the harness reads the exact captured file.
+    raw = "\n".join(
+        line for line in raw.splitlines() if not line.lstrip().startswith("#")
+    ).strip()
+
+    if not raw:
+        _eprint(f"ERROR: fixture/response file has no content after comments: {path}")
+        sys.exit(EXIT_INPUT)
+
     if raw.lstrip().startswith("<"):
         # Raw XML fixture: python3-saml expects base64, so encode it.
         xml_bytes = raw.encode("utf-8")
         saml_response_b64 = base64.b64encode(xml_bytes).decode("ascii")
         return saml_response_b64, xml_bytes
 
-    # Otherwise treat as a base64 SAMLResponse (real capture shape).
+    # Otherwise treat as a base64 SAMLResponse (real capture shape). Strip any
+    # remaining internal whitespace/newlines so validate=True (which rejects
+    # them) accepts a wrapped or trailing-newline base64 body.
+    raw = "".join(raw.split())
     try:
         xml_bytes = base64.b64decode(raw, validate=True)
     except (base64.binascii.Error, ValueError) as exc:
