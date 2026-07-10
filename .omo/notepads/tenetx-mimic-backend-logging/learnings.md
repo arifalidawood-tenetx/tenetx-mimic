@@ -70,6 +70,24 @@
 ### Next Tasks Unblocked
 - Todos 3,4,5,6,7,9 can now import { logger, createHttpLogger } from "./logger.js".
 
+## 2026-07-10 Task: todo-3 (index.ts: mount pino-http + process-level fatal handlers, gated to isMain)
+
+### What Landed (index.ts only; +13/-1)
+- Added `import { logger, createHttpLogger } from './logger.js'` (NodeNext .js specifier) right after the mimicConnections import.
+- Mounted `app.use(createHttpLogger())` as the FIRST app.use, ABOVE `express.json()` — wraps every request (incl. malformed-body/CORS-rejected) and sets the X-Request-Id response header.
+- isMain block: added `uncaughtException` + `unhandledRejection` handlers (logger.fatal + process.exit(1)) at the TOP of the block, and swapped the startup `console.log` → `logger.info({ host: listenHost, port }, 'tenetx-mimic-backend listening')`. Handlers are INSIDE isMain so a test import never attaches them.
+
+### Verification (all green)
+- `npm run build` exit 0; `npx vitest run` = 9 files / 60 tests, all pass unchanged.
+- Happy: `GET /health` → 200, `X-Request-Id: <uuid>`, body `{"status":"ok"}`; startup emitted via logger.info (pino-pretty INFO line). Evidence: .omo/evidence/task-3-tenetx-mimic-backend-logging.txt
+- Failure: `NODE_ENV=test` + tsx dynamic `import('./src/index.js')` → uncaughtException 0→0, unhandledRejection 0→0 (IDENTICAL). isMain gate confirmed.
+
+### Notes for todo-4 (SAME FILE — you are now unblocked)
+- `logger` is already imported at the top of index.ts; no new import needed for your console.* migration.
+- The ~11 remaining console.* calls (:59/77/127/172/582/593-595/597/671/735/784/846) are UNTOUCHED — still present, yours to migrate. The old :899 startup `console.log` is GONE (now logger.info) — do NOT re-touch that line.
+- Windows QA gotcha: `Start-Process -FilePath npm` FAILS ("%1 is not a valid Win32 application"). Use `-FilePath 'npm.cmd'`. (curl.exe progress meter also prints on stderr → shows red under PowerShell but is not an error.)
+- Commit: see `git log` for this task's commit (message: `feat(mimic-backend): mount pino-http request logging + process-level fatal handlers (gated to isMain)`).
+
 ## 2026-07-10 Task: todo-6 (Migrate statusToken.ts console.warn to logger)
 
 ### What Landed

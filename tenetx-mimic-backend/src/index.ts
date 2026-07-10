@@ -10,6 +10,7 @@ import { parseSamlMetadata, isAllowedMetadataHost } from './samlMetadata.js';
 import { signStatus } from './statusToken.js';
 import { encodeRelayState, decodeRelayState } from './relayState.js';
 import { getMimicIdpConnection, MimicIdpConnection } from './mimicConnections.js';
+import { logger, createHttpLogger } from './logger.js';
 
 // Exported for tests (mounted on an ephemeral port); the app.listen() at the
 // bottom is guarded to run only when this module is executed directly.
@@ -19,6 +20,9 @@ const port = Number(process.env.PORT) || 3000;
 // Anchors the .captured/ dir to the package root. src/ (tsx/vitest) and dist/
 // (compiled) both sit one level below it, so '..' is correct in either case.
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+// Mounted first so it wraps every request (incl. malformed-body/CORS-rejected).
+app.use(createHttpLogger());
 
 // Parse JSON bodies
 app.use(express.json());
@@ -890,12 +894,20 @@ const isMain =
   !!process.argv[1] &&
   normalizePath(process.argv[1]) === normalizePath(fileURLToPath(import.meta.url));
 if (isMain) {
+  process.on('uncaughtException', (err) => {
+    logger.fatal({ err }, 'uncaughtException - exiting');
+    process.exit(1);
+  });
+  process.on('unhandledRejection', (reason) => {
+    logger.fatal({ err: reason }, 'unhandledRejection - exiting');
+    process.exit(1);
+  });
   // Bind to the host resolved from process.env.HOST, defaulting to 0.0.0.0 so the
   // server is reachable from Traefik/Docker-network peers. For pure local-machine-only
   // runs (no Docker reverse proxy), set HOST=127.0.0.1 to avoid Windows Firewall prompts
   // (the browser-mediated SAML ACS POST would still originate locally).
   const listenHost = resolveListenHost();
   app.listen(port, listenHost, () => {
-    console.log(`tenetx-mimic-backend listening on ${listenHost}:${port}`);
+    logger.info({ host: listenHost, port }, 'tenetx-mimic-backend listening');
   });
 }
