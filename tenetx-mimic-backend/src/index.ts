@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
 import { parseSamlMetadata, isAllowedMetadataHost } from './samlMetadata.js';
 import { signStatus } from './statusToken.js';
+import { encodeRelayState } from './relayState.js';
 
 // Exported for tests (mounted on an ephemeral port); the app.listen() at the
 // bottom is guarded to run only when this module is executed directly.
@@ -661,6 +662,7 @@ app.get('/saml/login', async (req: Request, res: Response) => {
   const idpSsoUrl = firstQueryValue(req.query.idpSsoUrl);
   const idpCert = firstQueryValue(req.query.idpCert);
   const returnUrl = firstQueryValue(req.query.returnUrl);
+  const connectionDocId = firstQueryValue(req.query.connectionDocId);
 
   const required: Array<[string, string]> = [
     ['idpEntityId', idpEntityId],
@@ -678,7 +680,13 @@ app.get('/saml/login', async (req: Request, res: Response) => {
   const spBaseUrl = `${deriveRequestScheme(req)}://${deriveRequestHost(req)}`;
 
   try {
-    const result = await requestSamlLogin(spBaseUrl, returnUrl, idpEntityId, idpSsoUrl, idpCert);
+    const result = await requestSamlLogin(
+      spBaseUrl,
+      encodeRelayState({ returnUrl, connectionDocId: connectionDocId || undefined }),
+      idpEntityId,
+      idpSsoUrl,
+      idpCert
+    );
     if (result.result === 'redirect' && result.url) {
       res.redirect(302, result.url);
       return;
@@ -703,6 +711,7 @@ app.get('/saml/logout', async (req: Request, res: Response) => {
   const idpCert = firstQueryValue(req.query.idpCert);
   const returnUrl = firstQueryValue(req.query.returnUrl);
   const nameId = firstQueryValue(req.query.nameId);
+  const connectionDocId = firstQueryValue(req.query.connectionDocId);
 
   const required: Array<[string, string]> = [
     ['idpSloUrl', idpSloUrl],
@@ -723,7 +732,7 @@ app.get('/saml/logout', async (req: Request, res: Response) => {
     const result = await requestSamlLogout(
       spBaseUrl,
       spSlsUrl,
-      returnUrl,
+      encodeRelayState({ returnUrl, connectionDocId: connectionDocId || undefined }),
       idpEntityId,
       idpSloUrl,
       idpCert,

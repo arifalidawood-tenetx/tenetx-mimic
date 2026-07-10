@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { AddressInfo } from 'net';
 import type { Server } from 'http';
 import { app } from '../src/index.js';
+import { decodeRelayState } from '../src/relayState.js';
 
 let server: Server;
 let baseUrl: string;
@@ -44,6 +45,37 @@ describe('GET /saml/login', () => {
       expect(redirectUrl.searchParams.get('SAMLRequest')).toBeTruthy();
       // RelayState round-trips to the exact returnUrl (URL() auto-decodes it).
       expect(redirectUrl.searchParams.get('RelayState')).toBe(returnUrl);
+    },
+    30000
+  );
+
+  it(
+    'builds a composite RelayState (mimicrs:) decoding to {returnUrl, connectionDocId} when the optional connectionDocId is present',
+    async () => {
+      const connectionDocId = 'doc123';
+      const query = new URLSearchParams({
+        idpEntityId,
+        idpSsoUrl,
+        idpCert,
+        returnUrl,
+        connectionDocId,
+      });
+
+      const res = await fetch(`${baseUrl}/saml/login?${query.toString()}`, {
+        redirect: 'manual',
+      });
+
+      expect(res.status).toBe(302);
+
+      const location = res.headers.get('location') || '';
+      expect(location.startsWith(`${idpSsoUrl}?`)).toBe(true);
+
+      const redirectUrl = new URL(location);
+      expect(redirectUrl.searchParams.get('SAMLRequest')).toBeTruthy();
+
+      const relayState = redirectUrl.searchParams.get('RelayState') || '';
+      expect(relayState.startsWith('mimicrs:')).toBe(true);
+      expect(decodeRelayState(relayState)).toEqual({ returnUrl, connectionDocId });
     },
     30000
   );
