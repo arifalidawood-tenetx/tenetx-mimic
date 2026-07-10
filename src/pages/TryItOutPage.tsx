@@ -9,8 +9,9 @@ import {
   setDoc,
   where,
 } from "firebase/firestore";
-import { Badge, Button, Segmented } from "@/components/ui";
+import { Badge, Button, Segmented, SectionHeader } from "@/components/ui";
 import { Icon } from "@/components/icons";
+import { PageContainer } from "@/components/PageContainer";
 import { useAuthState } from "@/lib/authState";
 import { db } from "@/lib/firebaseClient";
 import {
@@ -205,9 +206,9 @@ export function TryItOutPage() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6 p-6">
+    <PageContainer size="narrow" className="space-y-6">
       <div>
-        <h1 className="text-lg font-semibold text-ink">Try it out</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-ink">Try it out</h1>
         <p className="mt-1 text-sm text-ink-muted">
           Pick your identity provider, follow its exact field values below, then launch a real
           login against it. Nothing here is invented — every value mirrors the qa-logbook
@@ -225,9 +226,9 @@ export function TryItOutPage() {
         }))}
       />
 
-      <div className="space-y-2 rounded-lg bg-card-2 p-4 ring-1 ring-line">
+      <div className="space-y-2 rounded-xl bg-card-2 p-4 ring-1 ring-line shadow-sm hover:shadow-md transition-shadow">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-ink">{guidance.label} — field values</h2>
+          <SectionHeader icon="sliders">{guidance.label} — field values</SectionHeader>
           <Badge tone="neutral">{guidance.location}</Badge>
         </div>
 
@@ -260,7 +261,7 @@ export function TryItOutPage() {
 
       <div
         role="alert"
-        className="space-y-1.5 rounded-lg bg-warning-soft p-4 ring-1 ring-line"
+        className="space-y-1.5 rounded-xl bg-warning-soft p-4 ring-1 ring-line shadow-sm hover:shadow-md transition-shadow"
       >
         <div className="flex items-center gap-2">
           <Icon name="alert" className="h-4 w-4 shrink-0 text-warning" />
@@ -269,7 +270,7 @@ export function TryItOutPage() {
         <p className="text-xs text-ink">{guidance.gotcha.body}</p>
       </div>
 
-      <div className="space-y-3 rounded-lg bg-card-2 p-4 ring-1 ring-line">
+      <div className="space-y-3 rounded-xl bg-card-2 p-4 ring-1 ring-line shadow-sm hover:shadow-md transition-shadow">
         <h2 className="text-sm font-semibold text-ink">Verify your {guidance.label} setup</h2>
         <p className="text-xs text-ink-muted">
           Enter the {realmLabel.toLowerCase()} you configured above, then verify it against{" "}
@@ -347,8 +348,8 @@ export function TryItOutPage() {
         )}
       </div>
 
-      <div className="space-y-2 rounded-lg bg-card-2 p-4 ring-1 ring-line">
-        <h2 className="text-sm font-semibold text-ink">Launch login</h2>
+      <div className="space-y-2 rounded-xl bg-card-2 p-4 ring-1 ring-line shadow-sm hover:shadow-md transition-shadow">
+        <SectionHeader icon="zap">Launch login</SectionHeader>
         <p className="text-xs text-ink-muted">
           Once {guidance.label} is configured with the values above, start a real login against
           it. This link goes straight to {guidance.label} — never to this mimic's own server.
@@ -368,6 +369,6 @@ export function TryItOutPage() {
         changes, update <code className="rounded bg-card-2 px-1">src/lib/idpSetupGuidance.ts</code>
         {" "}so this wizard stays in sync.
       </p>
-    </div>
+    </PageContainer>
   );
 }
