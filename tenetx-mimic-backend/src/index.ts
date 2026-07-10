@@ -780,13 +780,28 @@ app.get('/saml/sls', async (req: Request, res: Response) => {
   const samlResponse = firstQueryValue(req.query.SAMLResponse);
   const samlRequest = firstQueryValue(req.query.SAMLRequest);
   const relayState = firstQueryValue(req.query.RelayState);
+  const decoded = relayState ? decodeRelayState(relayState) : null;
   // `process` needs the same IdP identity `initiate` used, but the SLS callback
   // is a fresh stateless request (no session store here), so those ride as query
   // params alongside SAMLResponse/RelayState. Absent → the harness falls back to
-  // its synthetic defaults (keeps the demo/self-test path working).
-  const idpEntityId = firstQueryValue(req.query.idpEntityId);
-  const idpSloUrl = firstQueryValue(req.query.idpSloUrl);
-  const idpCert = firstQueryValue(req.query.idpCert);
+  // its synthetic defaults (keeps the demo/self-test path working). `let` (not
+  // `const`) because the Firestore fallback below may reassign them.
+  let idpEntityId = firstQueryValue(req.query.idpEntityId);
+  let idpSloUrl = firstQueryValue(req.query.idpSloUrl);
+  let idpCert = firstQueryValue(req.query.idpCert);
+
+  // Precedence: direct query params (above, highest) > RelayState connectionDocId
+  // → Firestore. The lookup fires ONLY when all three direct params are absent
+  // AND a connectionDocId rode in on RelayState, so the existing query-param
+  // tests keep taking the direct path unchanged.
+  if (!idpEntityId && !idpSloUrl && !idpCert && decoded?.connectionDocId) {
+    const resolved = await getMimicIdpConnection(decoded.connectionDocId);
+    if (resolved) {
+      idpEntityId = resolved.entity_id;
+      idpSloUrl = resolved.slo_url;
+      idpCert = resolved.certificate;
+    }
+  }
 
   const spSlsUrl = `${deriveRequestScheme(req)}://${deriveRequestHost(req)}/saml/sls`;
 
@@ -806,12 +821,15 @@ app.get('/saml/sls', async (req: Request, res: Response) => {
     result = { result: 'error', message: 'logout processing could not run' };
   }
 
-  if (relayState && isAllowedRelayState(relayState)) {
+  // OPEN-REDIRECT GUARD: the `decoded &&` is load-bearing — a no-RelayState
+  // callback decodes to null and MUST fall through to the raw-HTML branch below,
+  // not throw on decoded.returnUrl (mirrors /saml/acs's guard exactly).
+  if (decoded && isAllowedRelayState(decoded.returnUrl)) {
     const token =
       result.result === 'logged_out'
         ? signStatus({ status: 'logged_out' })
         : signStatus({ status: 'error', message: result.message ?? 'logout failed' });
-    res.redirect(302, `${relayState}?samlLogoutStatus=${token}`);
+    res.redirect(302, `${decoded.returnUrl}?samlLogoutStatus=${token}`);
     return;
   }
 

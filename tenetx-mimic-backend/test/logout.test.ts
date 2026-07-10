@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -7,6 +7,12 @@ import type { AddressInfo } from 'net';
 import type { Server } from 'http';
 import { app } from '../src/index.js';
 import { verifyStatus } from '../src/statusToken.js';
+import { encodeRelayState } from '../src/relayState.js';
+import { getMimicIdpConnection } from '../src/mimicConnections.js';
+
+vi.mock('../src/mimicConnections.js', () => ({
+  getMimicIdpConnection: vi.fn(),
+}));
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(testDir, '..');
@@ -190,6 +196,41 @@ describe.skipIf(!canRunLiveSlo)('GET /saml/sls (real SLO via python3-saml)', () 
       const html = await res.text();
       expect(html).toContain('Logout not completed');
       expect(html).not.toContain('Traceback');
+    },
+    30000
+  );
+
+  it(
+    'Firestore fallback: NO direct idp query params + a composite RelayState connectionDocId resolving via mocked Firestore → 302 logged_out',
+    async () => {
+      vi.mocked(getMimicIdpConnection).mockReset();
+      vi.mocked(getMimicIdpConnection).mockResolvedValueOnce({
+        entity_id: IDP_ENTITY_ID,
+        sso_url: '',
+        slo_url: IDP_SLO_URL,
+        certificate: '',
+      });
+
+      const res = await getSls({
+        SAMLResponse: logoutResponseB64,
+        RelayState: encodeRelayState({
+          returnUrl: RELAY_URL,
+          connectionDocId: 'conn-sls-doc',
+        }),
+      });
+
+      expect(getMimicIdpConnection).toHaveBeenCalledWith('conn-sls-doc');
+      expect(res.status).toBe(302);
+      const location = res.headers.get('location');
+      expect(location).toBeTruthy();
+
+      const url = new URL(location!);
+      expect(url.origin).toBe(RELAY_ORIGIN);
+      expect(url.pathname).toBe('/mimic/TEN-1/try-it-out');
+
+      const payload = verifyStatus(url.searchParams.get('samlLogoutStatus')!);
+      expect(payload).toBeTruthy();
+      expect(payload!.status).toBe('logged_out');
     },
     30000
   );
