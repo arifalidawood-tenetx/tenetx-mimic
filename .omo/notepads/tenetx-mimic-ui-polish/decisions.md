@@ -78,3 +78,55 @@ Restructured `src/components/TopBar.tsx` per plan (highest-regression-risk todo)
 ```
 
 **15/15 passed, zero edits to `TopBar.test.tsx`.** `npx tsc --noEmit -p tsconfig.json` exits 0 (no orphaned `Breadcrumb` import, no other type errors). Only `src/components/TopBar.tsx` staged/committed for this todo — other dirty files in the working tree (`App.tsx`, `AuthGate.tsx`, backend files, harness scripts, etc.) belong to unrelated in-flight work by parallel subagents/prior sessions and were left untouched.
+
+## Todo 8 (2026-07-10) — Ctrl+B sidebar toggle + footer padding/alignment fix
+
+Two user-reported bugs fixed in `src/components/TopBar.tsx` (on top of Todo 6's flex-shell restructure):
+
+### (A) Ctrl+B sidebar toggle
+
+- New `const [sidebarCollapsed, setSidebarCollapsed] = useState(false)` alongside existing `drawerOpen` state.
+- New `useEffect` mirroring the EXISTING Escape-key pattern's exact shape (`window.addEventListener("keydown", handleKeyDown)` + cleanup `removeEventListener` in the returned function), but registered unconditionally (empty deps `[]`, no early-return guard) since Ctrl+B must work app-wide regardless of drawer/sidebar state:
+  ```ts
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.ctrlKey && event.key.toLowerCase() === "b") {
+        event.preventDefault();
+        setSidebarCollapsed((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+  ```
+- `event.preventDefault()` called to stop the browser's native bold-text Ctrl+B binding from firing in contexts where it's active.
+- `<aside>` className switched from a single static string to `cn(baseClasses, sidebarCollapsed ? "lg:hidden" : "lg:flex")` — deliberately emitting ONLY ONE of `lg:flex`/`lg:hidden` at a time (never both) to avoid any Tailwind same-specificity source-order ambiguity. `baseClasses` no longer includes `lg:flex` directly; it's now conditional.
+- No `App.tsx` changes needed for the reflow — once the `<aside>` stops rendering as flex/visible, the sibling `<header>` (a flex/block sibling in the page's outer layout, owned by `App.tsx`/parallel Todo-7 work) naturally reflows to use the freed width. Confirmed via reading `App.tsx`'s outer container is a flex row (not touched here, per MUST NOT DO).
+- Gate: keybinding lives inside `TopBar`, which is unconditionally mounted, but the `<aside>` element (and thus any visible effect) only exists when `authorized` — matches the "only matters when authorized" requirement without needing an extra guard on the listener itself.
+
+### (B) Footer spacing/alignment fix
+
+Old: `<div className="mt-auto flex flex-col gap-2 border-t border-line px-3 py-4">` with `<span className="truncate ...">` (inline-level, no `block`) and a bare `<Button variant="ghost" size="sm">` (default width, centered content).
+
+New:
+```html
+<div className="mt-auto flex flex-col gap-3 border-t border-line px-4 py-4">
+  {isSuperAdmin && <Badge tone="accent">Super Admin</Badge>}
+  <span className="block truncate text-xs text-ink-muted">{email}</span>
+  <Button variant="ghost" size="sm" className="w-full justify-start" onClick={...}>Sign out</Button>
+</div>
+```
+- `gap-2` → `gap-3`, `px-3` → `px-4`: more generous vertical rhythm and horizontal breathing room matching the nav's `px-3`+ list padding above it.
+- `<span>` given explicit `block` (was already effectively block via default span-in-flex-column behavior, but made explicit per the plan's exact spec — harmless, no visual change, clarifies intent).
+- `<Button>`'s `className="w-full justify-start"` merges via the component's internal `cn(...)` (confirmed by reading `ui.tsx`'s `Button` — base classes include `justify-center`, and `cn` uses tailwind-merge so the later `justify-start` from our passed className wins, `w-full` overriding the button's default `inline-flex` sizing) — makes the Sign-out button fill the footer's width and left-align its content like a proper stacked menu item instead of a small centered pill.
+- **"Stray 0" investigation:** confirmed via reading `<aside>`'s className that `bg-bg` is present and not overridden anywhere else in this file (only one `className` prop on the `<aside>` element, no duplicate/conflicting background utility). The reported artifact is most likely the `DashboardPage` chart's Y-axis "0" bleeding through — which requires the `<aside>` to actually be an opaque, correctly document-flow/stacked sidebar (not floating/absolutely-positioned over content with a transparent or unpainted background). That positioning root cause is explicitly owned by the parallel Todo-7 `App.tsx` subagent per the task split; this todo's own scope (footer's internal spacing) does not by itself introduce or fix the overlap, but the increased opacity/consistency of the footer block plus confirmed `bg-bg` on `<aside>` rules out THIS file as a source of the leak. Recommend visual re-verification once both fixes land together.
+
+### Tests
+
+Added 1 new test to `TopBar.test.tsx` (existing 15 assertions untouched, byte-for-byte): `"pressing Ctrl+B toggles the desktop sidebar visibility"` — renders authorized, asserts `<aside>` starts with `lg:flex`/no `lg:hidden`, fires `fireEvent.keyDown(window, {key:"b", ctrlKey:true})`, asserts class flip to `lg:hidden`/no `lg:flex`, fires again, asserts flip back. Placed inside the `describe("when authorized", ...)` block (sidebar only exists when authorized).
+
+`npx vitest run src/components/TopBar.test.tsx --reporter=verbose` → **16/16 passed** (15 original + 1 new). `npx tsc --noEmit -p tsconfig.json` → exits 0.
+
+Hard constraints re-verified: HC#1 (single "TenetX Mimic home" link) and HC#2 (Sign-out gated on `authorized`) both untouched by this todo's edits — no home link exists in the footer/aside, and the entire `<aside>` block remains behind the same `{authorized && (...)}` guard as before.
+
+Only `src/components/TopBar.tsx` and `src/components/TopBar.test.tsx` touched/committed for this todo. Did NOT touch `App.tsx` (verified via `git diff --stat` before commit — parallel Todo-7 subagent's changes to that file are untouched by this work).

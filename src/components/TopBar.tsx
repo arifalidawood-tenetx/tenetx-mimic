@@ -47,6 +47,7 @@ export function TopBar() {
   const isSuperAdmin = email === SUPER_ADMIN_EMAIL;
   const authorized = status === "authorized";
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const location = useLocation();
 
   // Close drawer when route changes
@@ -70,17 +71,37 @@ export function TopBar() {
     };
   }, [drawerOpen]);
 
+  // Toggle desktop sidebar on Ctrl+B (application-wide)
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.ctrlKey && event.key.toLowerCase() === "b") {
+        event.preventDefault();
+        setSidebarCollapsed((v) => !v);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+
   return (
     <>
       {authorized && (
-        <aside className="hidden lg:sticky lg:top-0 lg:flex lg:h-screen lg:w-64 lg:shrink-0 lg:flex-col lg:border-r lg:border-line lg:bg-bg">
+        <aside
+          className={cn(
+            "hidden lg:sticky lg:top-0 lg:h-screen lg:w-64 lg:shrink-0 lg:flex-col lg:border-r lg:border-line lg:bg-bg",
+            sidebarCollapsed ? "lg:hidden" : "lg:flex"
+          )}
+        >
           <nav aria-label="Primary">
             <NavLinks />
           </nav>
-          <div className="mt-auto flex flex-col gap-2 border-t border-line px-3 py-4">
+          <div className="mt-auto flex flex-col gap-3 border-t border-line px-4 py-4">
             {isSuperAdmin && <Badge tone="accent">Super Admin</Badge>}
-            <span className="truncate text-xs text-ink-muted">{email}</span>
-            <Button variant="ghost" size="sm" onClick={() => void signOut()}>
+            <span className="block truncate text-xs text-ink-muted">{email}</span>
+            <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => void signOut()}>
               Sign out
             </Button>
           </div>
