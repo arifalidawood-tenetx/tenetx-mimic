@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from 'crypto';
+import { logger } from './logger.js';
 
 // Signed, short-lived status token used to hand a SAML verdict back to the SPA
 // through a redirect query param (consumed by /saml/acs and /saml/sls). This is
@@ -16,9 +17,7 @@ const DEV_ONLY_SECRET = 'tenetx-mimic-dev-only-insecure-secret';
 
 const statusSecret = process.env.MIMIC_STATUS_SECRET;
 if (!statusSecret) {
-  console.warn(
-    'MIMIC_STATUS_SECRET not set. Falling back to an insecure dev-only secret; status tokens are forgeable.'
-  );
+  logger.warn('MIMIC_STATUS_SECRET not set. Falling back to an insecure dev-only secret; status tokens are forgeable.');
 }
 const SECRET = statusSecret || DEV_ONLY_SECRET;
 
