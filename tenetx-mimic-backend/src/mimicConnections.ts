@@ -1,5 +1,6 @@
 import { Firestore } from '@google-cloud/firestore';
 import { UserRefreshClient } from 'google-auth-library';
+import { logger } from './logger.js';
 
 /**
  * Per-connection IdP identity read from the `mimic_idp_connections` Firestore
@@ -59,7 +60,7 @@ function coerceString(value: unknown): string {
  * identity, or `null` when unavailable.
  *
  * NEVER throws. A missing doc, an unset `FIREBASE_REFRESH_TOKEN`, or ANY
- * Firestore error all resolve to `null` (after a `console.warn`). Callers treat
+ * Firestore error all resolve to `null` (after logging a warning). Callers treat
  * `null` as "no per-tester override available" and fall back safely to their
  * existing behavior (env-var identity for `/saml/acs`, direct query params for
  * `/saml/sls`).
@@ -72,7 +73,7 @@ export async function getMimicIdpConnection(
   // built by an earlier call with the token present.
   const refreshToken = process.env.FIREBASE_REFRESH_TOKEN;
   if (!refreshToken) {
-    console.warn(
+    logger.warn(
       'getMimicIdpConnection: FIREBASE_REFRESH_TOKEN not set; returning null (no per-tester IdP override).',
     );
     return null;
@@ -83,8 +84,9 @@ export async function getMimicIdpConnection(
     const snap = await db.collection(COLLECTION).doc(connectionDocId).get();
 
     if (!snap.exists) {
-      console.warn(
-        `getMimicIdpConnection: no ${COLLECTION} doc for id "${connectionDocId}"; returning null.`,
+      logger.warn(
+        { connectionDocId },
+        'getMimicIdpConnection: no mimic_idp_connections doc found; returning null.',
       );
       return null;
     }
@@ -94,8 +96,9 @@ export async function getMimicIdpConnection(
 
     // An entity_id-less "connection" is unusable as a SAML IdP identity.
     if (!entity_id) {
-      console.warn(
-        `getMimicIdpConnection: ${COLLECTION} doc "${connectionDocId}" has no entity_id; returning null.`,
+      logger.warn(
+        { connectionDocId },
+        'getMimicIdpConnection: doc has no entity_id; returning null.',
       );
       return null;
     }
@@ -107,9 +110,9 @@ export async function getMimicIdpConnection(
       certificate: coerceString(data.certificate),
     };
   } catch (err) {
-    console.warn(
-      `getMimicIdpConnection: Firestore lookup for "${connectionDocId}" failed; returning null.`,
-      err instanceof Error ? err.message : err,
+    logger.warn(
+      { connectionDocId, err },
+      'getMimicIdpConnection: Firestore lookup failed; returning null.',
     );
     return null;
   }
