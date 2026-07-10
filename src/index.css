@@ -16,20 +16,20 @@
   color-scheme: light dark;
 
   /* Stepped surfaces — each layer slightly lighter than its parent. */
-  --surface-0: light-dark(#f4f5f7, #0a0c11); /* app canvas */
-  --surface-1: light-dark(#ffffff, #0e1117); /* cards */
-  --surface-2: light-dark(#ffffff, #14181f); /* nested / table heads */
+  --surface-0: light-dark(#f8fafc, #020617); /* app canvas */
+  --surface-1: light-dark(#ffffff, #0f172a); /* cards */
+  --surface-2: light-dark(#ffffff, #0f172a); /* nested / table heads */
   --surface-3: light-dark(#fbfbfd, #1a1f28); /* inset panels */
   --surface-overlay: light-dark(#ffffff, #20262f); /* drawer / popover */
 
   /* Per-mode tuned ink — lighter weights/contrast on dark. */
   --ink: light-dark(#13161c, #e9ecf2);
-  --ink-muted: light-dark(#565d68, #98a1b0);
+  --ink-muted: light-dark(#64748b, #94a3b8);
   /* tuned to clear 4.5:1 even at the tertiary/meta level, per mode */
   --ink-faint: light-dark(#6b7280, #7b828d);
 
   /* Hairline edges (used sparingly — elevation does the work in dark). */
-  --line: light-dark(#e7e9ee, rgba(255, 255, 255, 0.08));
+  --line: light-dark(#e2e8f0, #1e293b);
   --line-strong: light-dark(#d3d7de, rgba(255, 255, 255, 0.14));
 
   /* Status colours — tuned independently per mode for contrast. */
@@ -38,7 +38,7 @@
   --danger: light-dark(#cf2738, #f87171);
 
   /* The single interactive accent (deliberately not purple). */
-  --accent: light-dark(#1769d6, #41a6ff);
+  --accent: light-dark(#2563eb, #3b82f6);
 
   /* Soft tints derived from the tokens above (no duplicated hex). */
   --success-soft: color-mix(in srgb, var(--success) 14%, transparent);
@@ -86,12 +86,16 @@
   --color-accent-soft: var(--accent-soft);
 
   --color-on-accent: var(--on-accent);
+
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
 }
 
 /* Static (non-inline) tokens: typography + motion. */
 @theme {
-  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
 }
