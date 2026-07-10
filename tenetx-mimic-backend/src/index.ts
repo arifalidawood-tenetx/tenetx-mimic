@@ -270,6 +270,10 @@ function parseLastJsonLine<T = SamlVerdict>(stdout: string): T | null {
   return null;
 }
 
+// Validate a captured SAMLResponse against a real or overridden IdP identity.
+// When overrideIdp is provided (resolved from Firestore via RelayState's
+// connectionDocId in /saml/acs), uses its entity_id/sso_url/certificate instead
+// of the MIMIC_IDP_* env vars, enabling per-tester identity resolution (todos 1-4).
 function validateCapturedResponse(
   fixturePath: string,
   host: string,
@@ -543,6 +547,17 @@ export function resolveListenHost(): string {
 // so this route intentionally has NO authMiddleware. It (1) still persists the
 // raw base64 response to .captured/ exactly as before, then (2) LIVE-VALIDATES it
 // through the real SAMLProvider (via the harness), mirroring TEN-141's fixes.
+// (Todos 7/8 of the prior tenetx-mimic-tryout-custom-realm plan.)
+//
+// Per-tester identity resolution (mimic-saml-per-tester-idp-identity todos 1-4):
+// RelayState is decoded to extract an optional connectionDocId. When present, the
+// tester's own IdP identity (entity_id, sso_url, certificate) is resolved from
+// the Firestore mimic_idp_connections doc; when absent or lookup fails, the route
+// falls back to the MIMIC_IDP_* env-var identity (today's behavior, unchanged).
+// The decoded returnUrl is then used for the redirect-back-into-SPA 302, with the
+// same open-redirect guard (isAllowedRelayState) applied to the decoded returnUrl
+// as before — the guard now operates on a decoded field rather than raw RelayState,
+// but the origin allowlist check remains identical.
 app.post('/saml/acs', async (req: Request, res: Response) => {
   const samlResponse = req.body?.SAMLResponse;
   if (typeof samlResponse !== 'string' || !samlResponse) {
@@ -776,6 +791,17 @@ app.get('/saml/logout', async (req: Request, res: Response) => {
 // /saml/acs — this route has NO authMiddleware. It processes the message via
 // the logout harness, then either 302s a signed samlLogoutStatus token back
 // into the SPA (allowlisted RelayState) or renders a plain HTML fallback.
+// (Todos 5/8 of the prior tenetx-mimic-tryout-custom-realm plan.)
+//
+// Per-tester identity resolution (mimic-saml-per-tester-idp-identity todos 1-5):
+// RelayState is decoded to extract an optional connectionDocId. Query params take
+// precedence: if idpEntityId/idpSloUrl/idpCert are all absent AND a connectionDocId
+// is present in RelayState, the tester's own IdP identity is resolved from the
+// Firestore mimic_idp_connections doc. If the lookup fails or no connectionDocId
+// is present, the route falls back to today's behavior (synthetic defaults or
+// direct query params if provided). The decoded returnUrl is used for the
+// redirect-back-into-SPA 302, with the same open-redirect guard (isAllowedRelayState)
+// applied as before.
 app.get('/saml/sls', async (req: Request, res: Response) => {
   const samlResponse = firstQueryValue(req.query.SAMLResponse);
   const samlRequest = firstQueryValue(req.query.SAMLRequest);
