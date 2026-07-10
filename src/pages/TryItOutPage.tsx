@@ -38,7 +38,92 @@ interface StoredConnection extends VerifiedMetadata {
   realm: string;
 }
 
+/**
+ * Client-side-decoded view of the `samlStatus` token's payload (todo 7's
+ * `signStatus` shape: `{status, email, reason, iat}`). Only the fields the
+ * banner needs are kept; `status` is narrowed to the two "happy path"
+ * values the banner distinguishes — everything else (config_error,
+ * inconclusive, or a decode failure) collapses to the neutral `"unknown"`
+ * banner kind.
+ */
+type LoginBanner =
+  | { kind: "validated"; email: string | null }
+  | { kind: "rejected"; reason: string | null }
+  | { kind: "unknown" };
+
+/**
+ * Client-side-decoded view of the `samlLogoutStatus` token's payload (todo
+ * 8's `signStatus` shape: `{status, message, iat}` where `status` is
+ * `"logged_out"` or `"error"`). Anything else (a decode failure, or a
+ * status value neither of those two) collapses to the neutral `"unknown"`
+ * banner kind — mirrors `LoginBanner`'s fallback discipline exactly.
+ */
+type LogoutBanner =
+  | { kind: "logged_out" }
+  | { kind: "error"; message: string | null }
+  | { kind: "unknown" };
+
 const SAML_PROXY_URL = import.meta.env.VITE_SAML_PROXY_URL ?? "";
+
+/**
+ * Decodes (NEVER re-verifies — the HMAC signature was already checked
+ * server-side before the `/saml/acs` or `/saml/sls` redirect was issued)
+ * the payload half of a status token (`base64url(JSON).hmacHex`). Todo 7's
+ * `samlStatus` and todo 8's `samlLogoutStatus` tokens share this identical
+ * shape, so this ONE decoder backs both — only the field-shape narrowing
+ * below (`decodeSamlStatusPayload` / `decodeSamlLogoutStatusPayload`)
+ * differs per token kind, instead of duplicating the split/base64url/JSON
+ * parsing twice. Returns the raw parsed payload object when it decodes to
+ * a JSON object with a string `status` field, or `null` for anything
+ * malformed/tampered/unparsable so callers can fall back to a neutral
+ * banner instead of crashing or showing a false "confirmed" state.
+ */
+function decodeStatusToken(token: string): Record<string, unknown> | null {
+  try {
+    const [payloadPart] = token.split(".");
+    if (!payloadPart) return null;
+    const base64 = payloadPart.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+    const parsed: unknown = JSON.parse(atob(padded));
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      typeof (parsed as Record<string, unknown>).status !== "string"
+    ) {
+      return null;
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+/** Narrows a decoded token payload to `samlStatus`'s shape (todo 7:
+ * `{status, email, reason, iat}`). */
+function decodeSamlStatusPayload(
+  token: string
+): { status: string; email: string | null; reason: string | null } | null {
+  const record = decodeStatusToken(token);
+  if (!record) return null;
+  return {
+    status: record.status as string,
+    email: typeof record.email === "string" ? record.email : null,
+    reason: typeof record.reason === "string" ? record.reason : null,
+  };
+}
+
+/** Narrows a decoded token payload to `samlLogoutStatus`'s shape (todo 8:
+ * `{status, message, iat}`; `status` is `"logged_out"` or `"error"`). */
+function decodeSamlLogoutStatusPayload(
+  token: string
+): { status: string; message: string | null } | null {
+  const record = decodeStatusToken(token);
+  if (!record) return null;
+  return {
+    status: record.status as string,
+    message: typeof record.message === "string" ? record.message : null,
+  };
+}
 
 /**
  * Lowercase-alphanumeric-plus-hyphens only — matches what's safe to
@@ -82,6 +167,8 @@ export function TryItOutPage() {
   const [verifyError, setVerifyError] = useState<string | null>(null);
   const [verifiedMetadata, setVerifiedMetadata] = useState<VerifiedMetadata | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [loginBanner, setLoginBanner] = useState<LoginBanner | null>(null);
+  const [logoutBanner, setLogoutBanner] = useState<LogoutBanner | null>(null);
 
   const effectiveRealm = realm || DEFAULT_REALM;
   const guidance = getIdpGuidance(idpType, effectiveRealm);
@@ -111,7 +198,7 @@ export function TryItOutPage() {
         setVerifiedMetadata({
           entity_id: data.entity_id,
           sso_url: data.sso_url,
-          slo_url: data.slo_url,
+          slo_url: data.slo_url ?? "",
           certificate: data.certificate,
         });
       } catch (err) {
@@ -124,6 +211,55 @@ export function TryItOutPage() {
       active = false;
     };
   }, [ticket, idpType]);
+
+  // On mount, read (never re-verify) any `samlStatus` token the backend's
+  // `/saml/acs` redirect attached to `returnUrl` (todo 7's contract), render
+  // the matching banner, then strip the param via `replaceState` so a
+  // refresh doesn't re-show stale status.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("samlStatus");
+    if (!token) return;
+
+    const decoded = decodeSamlStatusPayload(token);
+    if (decoded?.status === "validated") {
+      setLoginBanner({ kind: "validated", email: decoded.email });
+    } else if (decoded?.status === "rejected") {
+      setLoginBanner({ kind: "rejected", reason: decoded.reason });
+    } else {
+      setLoginBanner({ kind: "unknown" });
+    }
+
+    params.delete("samlStatus");
+    const search = params.toString();
+    const nextUrl = `${window.location.pathname}${search ? `?${search}` : ""}${window.location.hash}`;
+    window.history.replaceState(null, "", nextUrl);
+  }, []);
+
+  // On mount, independently check (separate from the `samlStatus` effect
+  // above — both can coexist though never simultaneously in practice) for a
+  // `samlLogoutStatus` token the backend's `/saml/sls` redirect attached to
+  // `returnUrl` (todo 8's contract), render the matching banner, then strip
+  // the param via `replaceState` the same way.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("samlLogoutStatus");
+    if (!token) return;
+
+    const decoded = decodeSamlLogoutStatusPayload(token);
+    if (decoded?.status === "logged_out") {
+      setLogoutBanner({ kind: "logged_out" });
+    } else if (decoded?.status === "error") {
+      setLogoutBanner({ kind: "error", message: decoded.message });
+    } else {
+      setLogoutBanner({ kind: "unknown" });
+    }
+
+    params.delete("samlLogoutStatus");
+    const search = params.toString();
+    const nextUrl = `${window.location.pathname}${search ? `?${search}` : ""}${window.location.hash}`;
+    window.history.replaceState(null, "", nextUrl);
+  }, []);
 
   function handleCopy(field: string, value: string) {
     void navigator.clipboard.writeText(value);
@@ -173,7 +309,12 @@ export function TryItOutPage() {
         setVerifyError(body.error ?? `Verification failed (HTTP ${response.status})`);
         return;
       }
-      const verified: VerifiedMetadata = await response.json();
+      const rawVerified: VerifiedMetadata = await response.json();
+      // Guard against a backend that predates the slo_url field (or omits it
+      // for any other reason) — Firestore's setDoc() rejects `undefined`
+      // outright, and the invariant documented above is that slo_url is
+      // always a string here, never undefined.
+      const verified: VerifiedMetadata = { ...rawVerified, slo_url: rawVerified.slo_url ?? "" };
       setVerifiedMetadata(verified);
 
       try {
@@ -203,6 +344,46 @@ export function TryItOutPage() {
     } finally {
       setVerifying(false);
     }
+  }
+
+  /**
+   * Same-tab SP-initiated launch through the backend's `/saml/login` route
+   * (todo 6's contract), sourced from the just-verified `verifiedMetadata`
+   * rather than the static `guidance.launchLoginUrl`. Disabled by the caller
+   * until a verification has succeeded, so `verifiedMetadata` is always
+   * non-null here.
+   */
+  function handleLaunchLogin() {
+    if (!verifiedMetadata) return;
+    const params = new URLSearchParams({
+      idpEntityId: verifiedMetadata.entity_id,
+      idpSsoUrl: verifiedMetadata.sso_url,
+      idpCert: verifiedMetadata.certificate,
+      returnUrl: window.location.href,
+    });
+    window.location.assign(`${SAML_PROXY_URL}/saml/login?${params.toString()}`);
+  }
+
+  /**
+   * Same-tab real SAML SLO initiation through the backend's `/saml/logout`
+   * route (todo 8's contract), mirroring `handleLaunchLogin` exactly.
+   * Enabled whenever `verifiedMetadata` exists — see the notepad for the
+   * documented enable/disable rationale (the plan's "executor's choice").
+   * `nameId` is included only when a validated `loginBanner` carried an
+   * email; omitted entirely otherwise (never sent as an empty string).
+   */
+  function handleLogout() {
+    if (!verifiedMetadata) return;
+    const params = new URLSearchParams({
+      idpSloUrl: verifiedMetadata.slo_url,
+      idpEntityId: verifiedMetadata.entity_id,
+      idpCert: verifiedMetadata.certificate,
+      returnUrl: window.location.href,
+    });
+    if (loginBanner?.kind === "validated" && loginBanner.email) {
+      params.set("nameId", loginBanner.email);
+    }
+    window.location.assign(`${SAML_PROXY_URL}/saml/logout?${params.toString()}`);
   }
 
   return (
@@ -356,11 +537,67 @@ export function TryItOutPage() {
         </p>
         <Button
           variant="primary"
-          onClick={() => window.open(guidance.launchLoginUrl, "_blank", "noopener,noreferrer")}
+          onClick={handleLaunchLogin}
+          disabled={!verifiedMetadata}
+          title={verifiedMetadata ? undefined : "Verify your realm first"}
         >
           Launch {guidance.label} login
         </Button>
+        {!verifiedMetadata && (
+          <p className="text-xs text-ink-faint">Verify your realm first to enable this button.</p>
+        )}
         <p className="break-all text-[11px] text-ink-faint">{guidance.launchLoginUrl}</p>
+
+        {loginBanner?.kind === "validated" && (
+          <p role="status" className="text-sm font-medium text-success">
+            ✅ Confirmed — signed in as {loginBanner.email ?? "unknown"}
+          </p>
+        )}
+        {loginBanner?.kind === "rejected" && (
+          <p role="status" className="text-sm font-medium text-danger">
+            ❌ Rejected — {loginBanner.reason ?? "unknown reason"}
+          </p>
+        )}
+        {loginBanner?.kind === "unknown" && (
+          <p role="status" className="text-sm text-ink-muted">
+            Couldn&apos;t read login status.
+          </p>
+        )}
+      </div>
+
+      <div className="space-y-2 rounded-xl bg-card-2 p-4 ring-1 ring-line shadow-sm hover:shadow-md transition-shadow">
+        <SectionHeader icon="shield">Logout</SectionHeader>
+        <p className="text-xs text-ink-muted">
+          Trigger a real SAML Single Logout (SLO) against {guidance.label}, ending the session
+          you just launched above.
+        </p>
+        <Button
+          variant="primary"
+          onClick={handleLogout}
+          disabled={!verifiedMetadata}
+          title={verifiedMetadata ? undefined : "Verify your realm first"}
+        >
+          Logout
+        </Button>
+        {!verifiedMetadata && (
+          <p className="text-xs text-ink-faint">Verify your realm first to enable this button.</p>
+        )}
+
+        {logoutBanner?.kind === "logged_out" && (
+          <p role="status" className="text-sm font-medium text-success">
+            🚪 Logged out of {effectiveRealm}
+          </p>
+        )}
+        {logoutBanner?.kind === "error" && (
+          <p role="status" className="text-sm font-medium text-danger">
+            ⚠️ Logout error — {logoutBanner.message ?? "unknown reason"}
+          </p>
+        )}
+        {logoutBanner?.kind === "unknown" && (
+          <p role="status" className="text-sm text-ink-muted">
+            Couldn&apos;t read logout status.
+          </p>
+        )}
       </div>
 
       <p className="text-[11px] text-ink-faint">

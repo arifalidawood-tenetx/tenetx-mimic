@@ -118,7 +118,8 @@ export function SamlConfigPage() {
         setTestError(body.error ?? `Verification failed (HTTP ${response.status})`);
         return;
       }
-       setResult(await response.json());
+       const data: VerifiedMetadata = await response.json();
+       setResult({ ...data, slo_url: data.slo_url ?? "" });
       } catch (err) {
         console.error("tenetx-mimic-backend verify-metadata request failed:", err);
         const message = err instanceof Error ? err.message : String(err);

@@ -2,15 +2,17 @@ import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import { initializeApp, refreshToken } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import { writeFileSync, mkdirSync } from 'fs';
+import { writeFileSync, mkdirSync, existsSync } from 'fs';
 import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
+import { spawn } from 'child_process';
 import { parseSamlMetadata, isAllowedMetadataHost } from './samlMetadata.js';
+import { signStatus } from './statusToken.js';
 
 // Exported for tests (mounted on an ephemeral port); the app.listen() at the
 // bottom is guarded to run only when this module is executed directly.
 export const app = express();
-const port = process.env.PORT || 3000;
+const port = Number(process.env.PORT) || 3000;
 
 // Anchors the .captured/ dir to the package root. src/ (tsx/vitest) and dist/
 // (compiled) both sit one level below it, so '..' is correct in either case.
@@ -180,12 +182,356 @@ app.post(
   }
 );
 
-// POST /saml/acs: UNAUTHENTICATED SAML ACS capture endpoint. During a real SAML
-// login Keycloak POSTs a signed SAMLResponse here and cannot send a Firebase ID
-// token, so this route intentionally has NO authMiddleware. Its only job is to
-// persist the raw base64 response for a later read-only harness — it never parses,
-// validates, or interprets the SAMLResponse.
-app.post('/saml/acs', (req: Request, res: Response) => {
+// The real python3-saml validation lives in the UNMODIFIED SAMLProvider under
+// tenetx-source-code-dontpush/. We never reimplement it here: we shell out to
+// tenetx-mimic/harness/keycloak_saml_harness.py --json, which read-only-imports
+// that SAMLProvider. Node only (Defect A) chooses the request host and (Defect B)
+// surfaces the specific reason the harness returns.
+const harnessPath = join(packageRoot, '..', 'harness', 'keycloak_saml_harness.py');
+
+const loginHarnessPath = join(packageRoot, '..', 'harness', 'saml_login_request_harness.py');
+
+const logoutHarnessPath = join(packageRoot, '..', 'harness', 'saml_logout_harness.py');
+
+function resolvePythonExecutable(): string {
+  const productVenv = join(packageRoot, '..', '..', 'tenetx-source-code-dontpush', '.venv');
+  const candidates = [
+    process.env.MIMIC_PYTHON,
+    join(productVenv, 'Scripts', 'python.exe'),
+    join(productVenv, 'bin', 'python'),
+  ].filter((candidate): candidate is string => !!candidate);
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return process.platform === 'win32' ? 'python' : 'python3';
+}
+
+function firstHeaderValue(value: string | string[] | undefined): string {
+  const single = Array.isArray(value) ? value[0] : value;
+  return typeof single === 'string' ? single.split(',')[0].trim() : '';
+}
+
+// Defect A: prefer X-Forwarded-Host, fall back to the raw Host header — the same
+// precedence the fixed real product uses (middleware._get_request_host), so the
+// SP ACS/Entity-ID the SAMLProvider validates against tracks the public host a
+// reverse proxy forwards rather than an internal Host it rewrites.
+function deriveRequestHost(req: Request): string {
+  return firstHeaderValue(req.headers['x-forwarded-host']) || firstHeaderValue(req.headers['host']);
+}
+
+function deriveRequestScheme(req: Request): 'http' | 'https' {
+  return firstHeaderValue(req.headers['x-forwarded-proto']).toLowerCase() === 'https'
+    ? 'https'
+    : 'http';
+}
+
+interface SamlVerdict {
+  result: 'validated' | 'rejected' | 'config_error' | 'inconclusive';
+  email?: string | null;
+  name_id?: string | null;
+  reason?: string;
+  message?: string;
+}
+
+interface SamlLoginResult {
+  result: 'redirect' | 'config_error';
+  url?: string;
+  message?: string;
+}
+
+// saml_logout_harness.py verdicts: `initiate` yields redirect|config_error;
+// `process` yields logged_out|error|config_error.
+interface SamlLogoutResult {
+  result: 'redirect' | 'logged_out' | 'error' | 'config_error';
+  url?: string;
+  message?: string;
+  slo_response_url?: string;
+}
+
+// Generic last-parseable-JSON-line scanner. Defaults to SamlVerdict so the
+// existing /saml/acs caller below is unchanged; /saml/login passes
+// <SamlLoginResult>. Both harnesses interleave "[...]"/"[SAML ERROR]" diagnostic
+// lines with the JSON verdict, so scanning up for the last line that parses is
+// what makes this reusable across both.
+function parseLastJsonLine<T = SamlVerdict>(stdout: string): T | null {
+  const lines = stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  // The real SAMLProvider prints a "[SAML ERROR] ..." line to stdout (saml.py:243),
+  // so the JSON verdict is not always the whole of stdout — scan up for the last
+  // line that actually parses.
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      return JSON.parse(lines[i]) as T;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+function validateCapturedResponse(
+  fixturePath: string,
+  host: string,
+  scheme: 'http' | 'https'
+): Promise<SamlVerdict> {
+  const args = [harnessPath, '--fixture', fixturePath, '--json', '--request-scheme', scheme];
+  if (host) args.push('--request-host', host);
+  if (process.env.MIMIC_IDP_ENTITY_ID) args.push('--idp-entity-id', process.env.MIMIC_IDP_ENTITY_ID);
+  if (process.env.MIMIC_IDP_SSO_URL) args.push('--idp-sso-url', process.env.MIMIC_IDP_SSO_URL);
+  if (process.env.MIMIC_IDP_CERT_FILE) args.push('--idp-cert-file', process.env.MIMIC_IDP_CERT_FILE);
+
+  return new Promise<SamlVerdict>((resolvePromise) => {
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const settle = (verdict: SamlVerdict) => {
+      if (!settled) {
+        settled = true;
+        resolvePromise(verdict);
+      }
+    };
+    const child = spawn(resolvePythonExecutable(), args, { windowsHide: true });
+    const timer = setTimeout(() => {
+      child.kill();
+      settle({ result: 'inconclusive', message: 'validation timed out' });
+    }, 20000);
+    child.stdout.on('data', (chunk) => (stdout += chunk.toString()));
+    child.stderr.on('data', (chunk) => (stderr += chunk.toString()));
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      settle({ result: 'inconclusive', message: `could not run validator: ${error.message}` });
+    });
+    child.on('close', () => {
+      clearTimeout(timer);
+      const verdict = parseLastJsonLine(stdout);
+      settle(
+        verdict ?? {
+          result: 'inconclusive',
+          message: (stderr.trim().split(/\r?\n/).pop() || 'no verdict from validator').slice(0, 500),
+        }
+      );
+    });
+  });
+}
+
+// Shell out to the SP-initiated login harness (todo 4), mirroring
+// validateCapturedResponse's subprocess shape: 20s timeout + child.kill(),
+// stdout/stderr accumulation, and a last-JSON-line scan of stdout. It ALWAYS
+// resolves to a SamlLoginResult — a timeout, spawn error, unparseable output,
+// or nonzero exit all collapse into one clean config_error so the /saml/login
+// route can never hang or throw an unhandled exception.
+function requestSamlLogin(
+  spBaseUrl: string,
+  returnUrl: string,
+  idpEntityId: string,
+  idpSsoUrl: string,
+  idpCert: string
+): Promise<SamlLoginResult> {
+  const args = [
+    loginHarnessPath,
+    '--sp-base-url', spBaseUrl,
+    '--return-url', returnUrl,
+    '--idp-entity-id', idpEntityId,
+    '--idp-sso-url', idpSsoUrl,
+    '--idp-cert', idpCert,
+    '--json',
+  ];
+
+  return new Promise<SamlLoginResult>((resolvePromise) => {
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const settle = (result: SamlLoginResult) => {
+      if (!settled) {
+        settled = true;
+        resolvePromise(result);
+      }
+    };
+    const child = spawn(resolvePythonExecutable(), args, { windowsHide: true });
+    const timer = setTimeout(() => {
+      child.kill();
+      settle({ result: 'config_error', message: 'login request timed out' });
+    }, 20000);
+    child.stdout.on('data', (chunk) => (stdout += chunk.toString()));
+    child.stderr.on('data', (chunk) => (stderr += chunk.toString()));
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      settle({ result: 'config_error', message: `could not run login harness: ${error.message}` });
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      const parsed = parseLastJsonLine<SamlLoginResult>(stdout);
+      if (parsed?.result === 'redirect' && parsed.url) {
+        settle(parsed);
+        return;
+      }
+      // config_error verdict, nonzero exit, or no parseable JSON — surface the
+      // harness's own message (or the last stderr line) as a single config_error.
+      const message =
+        parsed?.message ||
+        stderr.trim().split(/\r?\n/).pop() ||
+        `login harness exited with code ${code ?? 'unknown'}`;
+      settle({ result: 'config_error', message: message.slice(0, 500) });
+    });
+  });
+}
+
+// initiate: build the SP-initiated LogoutRequest redirect to the IdP SLO
+// endpoint. Mirrors requestSamlLogin's subprocess contract exactly (20s
+// timeout, settled guard, last-JSON-line scan) so a timeout/spawn-error/
+// unparseable/nonzero exit all collapse to one config_error the route turns
+// into a 502 — the route can never hang or throw.
+function requestSamlLogout(
+  spBaseUrl: string,
+  spSlsUrl: string,
+  returnUrl: string,
+  idpEntityId: string,
+  idpSloUrl: string,
+  idpCert: string,
+  nameId: string
+): Promise<SamlLogoutResult> {
+  const args = [
+    logoutHarnessPath,
+    'initiate',
+    '--idp-slo-url', idpSloUrl,
+    '--idp-entity-id', idpEntityId,
+    '--idp-cert', idpCert,
+    '--sp-base-url', spBaseUrl,
+    '--sp-sls-url', spSlsUrl,
+    '--return-url', returnUrl,
+    '--json',
+  ];
+  if (nameId) args.push('--name-id', nameId);
+
+  return new Promise<SamlLogoutResult>((resolvePromise) => {
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const settle = (result: SamlLogoutResult) => {
+      if (!settled) {
+        settled = true;
+        resolvePromise(result);
+      }
+    };
+    const child = spawn(resolvePythonExecutable(), args, { windowsHide: true });
+    const timer = setTimeout(() => {
+      child.kill();
+      settle({ result: 'config_error', message: 'logout request timed out' });
+    }, 20000);
+    child.stdout.on('data', (chunk) => (stdout += chunk.toString()));
+    child.stderr.on('data', (chunk) => (stderr += chunk.toString()));
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      settle({ result: 'config_error', message: `could not run logout harness: ${error.message}` });
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      const parsed = parseLastJsonLine<SamlLogoutResult>(stdout);
+      if (parsed?.result === 'redirect' && parsed.url) {
+        settle(parsed);
+        return;
+      }
+      const message =
+        parsed?.message ||
+        stderr.trim().split(/\r?\n/).pop() ||
+        `logout harness exited with code ${code ?? 'unknown'}`;
+      settle({ result: 'config_error', message: message.slice(0, 500) });
+    });
+  });
+}
+
+// process: validate the IdP's LogoutResponse (or a LogoutRequest for the
+// IdP-initiated case). Same subprocess shape as requestSamlLogout, but here
+// logged_out | error | config_error are ALL definitive harness verdicts the
+// route branches on, so only a timeout/spawn-failure/unparseable output
+// collapses to a synthetic error.
+function processSamlLogout(
+  spSlsUrl: string,
+  idpEntityId: string,
+  idpSloUrl: string,
+  idpCert: string,
+  samlResponse: string,
+  samlRequest: string,
+  relayState: string
+): Promise<SamlLogoutResult> {
+  const args = [logoutHarnessPath, 'process', '--sp-sls-url', spSlsUrl, '--json'];
+  if (idpEntityId) args.push('--idp-entity-id', idpEntityId);
+  if (idpSloUrl) args.push('--idp-slo-url', idpSloUrl);
+  if (idpCert) args.push('--idp-cert', idpCert);
+  if (samlResponse) args.push('--saml-response', samlResponse);
+  if (samlRequest) args.push('--saml-request', samlRequest);
+  if (relayState) args.push('--relay-state', relayState);
+
+  return new Promise<SamlLogoutResult>((resolvePromise) => {
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const settle = (result: SamlLogoutResult) => {
+      if (!settled) {
+        settled = true;
+        resolvePromise(result);
+      }
+    };
+    const child = spawn(resolvePythonExecutable(), args, { windowsHide: true });
+    const timer = setTimeout(() => {
+      child.kill();
+      settle({ result: 'error', message: 'logout processing timed out' });
+    }, 20000);
+    child.stdout.on('data', (chunk) => (stdout += chunk.toString()));
+    child.stderr.on('data', (chunk) => (stderr += chunk.toString()));
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      settle({ result: 'error', message: `could not run logout harness: ${error.message}` });
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      const parsed = parseLastJsonLine<SamlLogoutResult>(stdout);
+      if (parsed?.result) {
+        settle(parsed);
+        return;
+      }
+      const message =
+        stderr.trim().split(/\r?\n/).pop() ||
+        `logout harness exited with code ${code ?? 'unknown'}`;
+      settle({ result: 'error', message: message.slice(0, 500) });
+    });
+  });
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// Open-redirect guard shared by /saml/acs (todo 7) and /saml/sls (todo 8): a
+// RelayState is only a safe 302 target when it parses AND its origin matches the
+// CORS allowlist. Returns the parsed URL when allowed, null (parse failure or
+// foreign origin) when the caller must fall through to its raw-HTML branch
+// instead of redirecting to an untrusted origin. SECURITY — do not weaken.
+function isAllowedRelayState(url: string): URL | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  return parsed.origin === allowedOrigin ? parsed : null;
+}
+
+// Resolve the listen host from process.env.HOST or default to 0.0.0.0.
+// Exported for testing; can be imported directly without starting the server.
+export function resolveListenHost(): string {
+  return process.env.HOST || '0.0.0.0';
+}
+
+// POST /saml/acs: UNAUTHENTICATED SAML ACS endpoint. During a real SAML login
+// Keycloak POSTs a signed SAMLResponse here and cannot send a Firebase ID token,
+// so this route intentionally has NO authMiddleware. It (1) still persists the
+// raw base64 response to .captured/ exactly as before, then (2) LIVE-VALIDATES it
+// through the real SAMLProvider (via the harness), mirroring TEN-141's fixes.
+app.post('/saml/acs', async (req: Request, res: Response) => {
   const samlResponse = req.body?.SAMLResponse;
   if (typeof samlResponse !== 'string' || !samlResponse) {
     res.status(400).json({ error: 'SAMLResponse is required' });
@@ -193,7 +539,10 @@ app.post('/saml/acs', (req: Request, res: Response) => {
   }
 
   const capturedAt = new Date().toISOString();
-  const capturedDir = join(packageRoot, '.captured');
+  // Capture dir is configurable (MIMIC_CAPTURED_DIR) so parallel test files each
+  // own an isolated dir instead of contending on one shared .captured/; defaults
+  // to the package-root .captured/ for real runs.
+  const capturedDir = process.env.MIMIC_CAPTURED_DIR || join(packageRoot, '.captured');
   const filePath = join(
     capturedDir,
     `saml-response-${capturedAt.replace(/[:.]/g, '-')}.txt`
@@ -221,12 +570,240 @@ app.post('/saml/acs', (req: Request, res: Response) => {
     console.warn('Could not base64-decode SAMLResponse for console preview:', error);
   }
 
+  const capturedNote = '<p>SAMLResponse captured to <code>.captured/</code></p>';
+  try {
+    const host = deriveRequestHost(req);
+    const scheme = deriveRequestScheme(req);
+    const verdict = await validateCapturedResponse(filePath, host, scheme);
+
+    // SP-initiated logins (/saml/login) echo RelayState back here. Only when
+    // its origin matches the CORS allowlist — an OPEN-REDIRECT GUARD, we must
+    // never 302 to an untrusted origin — do we hand the verdict to the SPA as a
+    // signed samlStatus token. Absent/foreign RelayState falls through to the
+    // UNCHANGED raw-HTML responses below (keeps the no-RelayState tests intact).
+    const relayState = req.body?.RelayState;
+    if (typeof relayState === 'string' && relayState && isAllowedRelayState(relayState)) {
+      const token = signStatus({
+        status: verdict.result,
+        email: verdict.email ?? null,
+        reason: verdict.reason ?? null,
+      });
+      res.redirect(302, `${relayState}?samlStatus=${token}`);
+      return;
+    }
+
+    if (verdict.result === 'validated') {
+      const who = escapeHtml(verdict.email || verdict.name_id || '(no email in assertion)');
+      res
+        .status(200)
+        .type('html')
+        .send(
+          '<!doctype html><html><body><h1>Login succeeded</h1>' +
+            `<p>Validated by the real SAMLProvider. Signed-in user: <strong>${who}</strong></p>` +
+            capturedNote +
+            '</body></html>'
+        );
+      return;
+    }
+
+    if (verdict.result === 'rejected') {
+      res
+        .status(401)
+        .type('html')
+        .send(
+          '<!doctype html><html><body><h1>Login rejected</h1>' +
+            '<p>The real SAMLProvider rejected this response. Specific reason:</p>' +
+            `<pre>${escapeHtml(verdict.reason || '(no reason reported)')}</pre>` +
+            capturedNote +
+            '</body></html>'
+        );
+      return;
+    }
+
+    res
+      .status(200)
+      .type('html')
+      .send(
+        '<!doctype html><html><body><h1>SAMLResponse captured</h1>' +
+          `<p>Live validation did not reach a verdict: ${escapeHtml(verdict.message || verdict.reason || 'unknown')}</p>` +
+          capturedNote +
+          '</body></html>'
+      );
+  } catch (error) {
+    console.error('Live SAML validation errored:', error);
+    res
+      .status(200)
+      .type('html')
+      .send(
+        '<!doctype html><html><body><h1>SAMLResponse captured</h1>' +
+          '<p>Live validation could not run; the capture on disk is unaffected.</p>' +
+          capturedNote +
+          '</body></html>'
+      );
+  }
+});
+
+// GET /saml/login: UNAUTHENTICATED SP-initiated login kickoff. The browser hits
+// this directly at the start of a login and has no Firebase ID token to send,
+// so — exactly like /saml/acs — this route intentionally has NO authMiddleware.
+// It shells out to the login harness (todo 4) to build the real AuthnRequest
+// redirect via the unmodified SAMLProvider, then 302s the browser to the IdP.
+// --sp-base-url is derived from the request host/scheme the same way the ACS
+// path derives them (deriveRequestScheme/deriveRequestHost).
+function firstQueryValue(value: unknown): string {
+  if (typeof value === 'string') return value.trim();
+  if (Array.isArray(value) && typeof value[0] === 'string') return value[0].trim();
+  return '';
+}
+
+app.get('/saml/login', async (req: Request, res: Response) => {
+  const idpEntityId = firstQueryValue(req.query.idpEntityId);
+  const idpSsoUrl = firstQueryValue(req.query.idpSsoUrl);
+  const idpCert = firstQueryValue(req.query.idpCert);
+  const returnUrl = firstQueryValue(req.query.returnUrl);
+
+  const required: Array<[string, string]> = [
+    ['idpEntityId', idpEntityId],
+    ['idpSsoUrl', idpSsoUrl],
+    ['idpCert', idpCert],
+    ['returnUrl', returnUrl],
+  ];
+  const missing = required.filter(([, value]) => !value).map(([name]) => name);
+  if (missing.length > 0) {
+    res.status(400).json({ error: `missing required query param(s): ${missing.join(', ')}` });
+    return;
+  }
+
+  // sp-base-url = "<scheme>://<host>", derived exactly as the ACS path does.
+  const spBaseUrl = `${deriveRequestScheme(req)}://${deriveRequestHost(req)}`;
+
+  try {
+    const result = await requestSamlLogin(spBaseUrl, returnUrl, idpEntityId, idpSsoUrl, idpCert);
+    if (result.result === 'redirect' && result.url) {
+      res.redirect(302, result.url);
+      return;
+    }
+    // config_error / timeout / subprocess failure → clean 502 JSON (never a
+    // raw traceback, never a hung request).
+    res.status(502).json({ error: result.message || 'login request failed' });
+  } catch (error) {
+    console.error('SAML login request errored:', error);
+    res.status(502).json({ error: 'login request could not run' });
+  }
+});
+
+// GET /saml/logout: UNAUTHENTICATED SP-initiated logout kickoff. Same rationale
+// as /saml/login — the browser hits it mid-flow with no Firebase token — so it
+// intentionally has NO authMiddleware. Shells to the logout harness `initiate`
+// (todo 5) to build the real LogoutRequest via python3-saml, then 302s to the
+// IdP SLO endpoint. --sp-sls-url is the SP callback the IdP posts back to.
+app.get('/saml/logout', async (req: Request, res: Response) => {
+  const idpSloUrl = firstQueryValue(req.query.idpSloUrl);
+  const idpEntityId = firstQueryValue(req.query.idpEntityId);
+  const idpCert = firstQueryValue(req.query.idpCert);
+  const returnUrl = firstQueryValue(req.query.returnUrl);
+  const nameId = firstQueryValue(req.query.nameId);
+
+  const required: Array<[string, string]> = [
+    ['idpSloUrl', idpSloUrl],
+    ['idpEntityId', idpEntityId],
+    ['idpCert', idpCert],
+    ['returnUrl', returnUrl],
+  ];
+  const missing = required.filter(([, value]) => !value).map(([name]) => name);
+  if (missing.length > 0) {
+    res.status(400).json({ error: `missing required query param(s): ${missing.join(', ')}` });
+    return;
+  }
+
+  const spBaseUrl = `${deriveRequestScheme(req)}://${deriveRequestHost(req)}`;
+  const spSlsUrl = `${spBaseUrl}/saml/sls`;
+
+  try {
+    const result = await requestSamlLogout(
+      spBaseUrl,
+      spSlsUrl,
+      returnUrl,
+      idpEntityId,
+      idpSloUrl,
+      idpCert,
+      nameId
+    );
+    if (result.result === 'redirect' && result.url) {
+      res.redirect(302, result.url);
+      return;
+    }
+    res.status(502).json({ error: result.message || 'logout request failed' });
+  } catch (error) {
+    console.error('SAML logout request errored:', error);
+    res.status(502).json({ error: 'logout request could not run' });
+  }
+});
+
+// GET /saml/sls: UNAUTHENTICATED SLS callback. The IdP redirects the browser
+// here with the LogoutResponse and cannot send a Firebase token, so — like
+// /saml/acs — this route has NO authMiddleware. It processes the message via
+// the logout harness, then either 302s a signed samlLogoutStatus token back
+// into the SPA (allowlisted RelayState) or renders a plain HTML fallback.
+app.get('/saml/sls', async (req: Request, res: Response) => {
+  const samlResponse = firstQueryValue(req.query.SAMLResponse);
+  const samlRequest = firstQueryValue(req.query.SAMLRequest);
+  const relayState = firstQueryValue(req.query.RelayState);
+  // `process` needs the same IdP identity `initiate` used, but the SLS callback
+  // is a fresh stateless request (no session store here), so those ride as query
+  // params alongside SAMLResponse/RelayState. Absent → the harness falls back to
+  // its synthetic defaults (keeps the demo/self-test path working).
+  const idpEntityId = firstQueryValue(req.query.idpEntityId);
+  const idpSloUrl = firstQueryValue(req.query.idpSloUrl);
+  const idpCert = firstQueryValue(req.query.idpCert);
+
+  const spSlsUrl = `${deriveRequestScheme(req)}://${deriveRequestHost(req)}/saml/sls`;
+
+  let result: SamlLogoutResult;
+  try {
+    result = await processSamlLogout(
+      spSlsUrl,
+      idpEntityId,
+      idpSloUrl,
+      idpCert,
+      samlResponse,
+      samlRequest,
+      relayState
+    );
+  } catch (error) {
+    console.error('SAML logout processing errored:', error);
+    result = { result: 'error', message: 'logout processing could not run' };
+  }
+
+  if (relayState && isAllowedRelayState(relayState)) {
+    const token =
+      result.result === 'logged_out'
+        ? signStatus({ status: 'logged_out' })
+        : signStatus({ status: 'error', message: result.message ?? 'logout failed' });
+    res.redirect(302, `${relayState}?samlLogoutStatus=${token}`);
+    return;
+  }
+
+  // No usable RelayState → plain HTML confirmation (mirrors /saml/acs's fallback).
+  if (result.result === 'logged_out') {
+    res
+      .status(200)
+      .type('html')
+      .send(
+        '<!doctype html><html><body><h1>Logged out</h1>' +
+          '<p>The real python3-saml toolkit processed the SAML Single Logout response.</p>' +
+          '</body></html>'
+      );
+    return;
+  }
+
   res
     .status(200)
     .type('html')
     .send(
-      '<!doctype html><html><body><h1>SAMLResponse captured</h1>' +
-        '<p>check <code>.captured/</code></p></body></html>'
+      '<!doctype html><html><body><h1>Logout not completed</h1>' +
+        `<p>The SAML logout could not be confirmed: ${escapeHtml(result.message || 'unknown error')}</p>` +
+        '</body></html>'
     );
 });
 
@@ -238,7 +815,12 @@ const isMain =
   !!process.argv[1] &&
   normalizePath(process.argv[1]) === normalizePath(fileURLToPath(import.meta.url));
 if (isMain) {
-  app.listen(port, () => {
-    console.log(`tenetx-mimic-backend listening on port ${port}`);
+  // Bind to the host resolved from process.env.HOST, defaulting to 0.0.0.0 so the
+  // server is reachable from Traefik/Docker-network peers. For pure local-machine-only
+  // runs (no Docker reverse proxy), set HOST=127.0.0.1 to avoid Windows Firewall prompts
+  // (the browser-mediated SAML ACS POST would still originate locally).
+  const listenHost = resolveListenHost();
+  app.listen(port, listenHost, () => {
+    console.log(`tenetx-mimic-backend listening on ${listenHost}:${port}`);
   });
 }

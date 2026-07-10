@@ -240,11 +240,32 @@ def _parse_destination(xml_bytes: bytes, path: str) -> str:
     return destination
 
 
-def _derive_request_parts(destination: str, normalize_public_host) -> dict:
-    """Derive host/scheme/port/script_name/sp_base_url from the Destination URL.
+def _derive_request_parts(
+    destination: str,
+    normalize_public_host,
+    *,
+    request_host: str | None = None,
+    request_scheme: str | None = None,
+) -> dict:
+    """Derive host/scheme/port/script_name/sp_base_url for the SP identity.
 
     ``http_host`` is computed with the REAL product ``normalize_public_host``
     (never a reimplementation), mirroring auth.py:824.
+
+    Two modes:
+      - Default (``request_host`` is None): every part is derived from the
+        signed ``Destination`` and ``acs_url`` is pinned to it. This is the
+        original root-cause-harness behaviour; by construction it can never
+        exhibit the TEN-141 host divergence (see task-9 evidence).
+      - Request-host mode (``request_host`` supplied): ``http_host`` /
+        ``sp_base_url`` / port / scheme come from the REQUEST host instead,
+        exactly as the real product builds ``sp_base_url`` from the request
+        host (auth.py:_public_origin_from_request) rather than from what the
+        IdP signed. ``acs_url`` (the Recipient the SP settings advertise) is
+        then host-derived too, so a divergent forwarded host makes the SP
+        ACS/Entity-ID stop matching the signed Destination/Recipient/Audience
+        and ``strict:True`` rejects it. This is how the mimic ACS endpoint
+        mirrors TEN-141's Defect A live.
     """
     parsed = urlparse(destination)
     if not parsed.scheme or not parsed.netloc:
@@ -254,18 +275,33 @@ def _derive_request_parts(destination: str, normalize_public_host) -> dict:
         )
         sys.exit(EXIT_INPUT)
 
-    is_https = parsed.scheme.lower() == "https"
-    http_host = normalize_public_host(parsed.netloc)
     script_name = parsed.path or "/"
-    server_port = parsed.port or (443 if is_https else 80)
-    sp_base_url = f"{parsed.scheme}://{parsed.netloc}"
+
+    if request_host:
+        # The ACS path we serve is whatever the IdP signed over (script_name),
+        # but the host/scheme are the REQUEST's, so the SP identity floats with
+        # the (attacker-influenceable) forwarded host — the TEN-141 divergence.
+        scheme = (request_scheme or parsed.scheme or "https").lower()
+        netloc = request_host
+    else:
+        scheme = parsed.scheme.lower()
+        netloc = parsed.netloc
+
+    is_https = scheme == "https"
+    reparsed = urlparse(f"{scheme}://{netloc}")  # so .port parses in both modes
+    http_host = normalize_public_host(netloc)
+    server_port = reparsed.port or (443 if is_https else 80)
+    sp_base_url = f"{scheme}://{netloc}"
+    # Destination mode pins the Recipient to the signed Destination (legacy);
+    # request-host mode host-derives it so the divergence is actually exercised.
+    acs_url = f"{sp_base_url}{script_name}" if request_host else destination
     return {
         "https": is_https,
         "http_host": http_host,
         "script_name": script_name,
         "server_port": server_port,
         "sp_base_url": sp_base_url,
-        "acs_url": destination,
+        "acs_url": acs_url,
     }
 
 
@@ -359,6 +395,28 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
             "saml_certificate (e.g. from the mimic app's /verify-metadata output)."
         ),
     )
+    parser.add_argument(
+        "--request-host",
+        help=(
+            "Request host (X-Forwarded-Host preferred, else Host) the SP identity "
+            "is derived from. When set, sp_base_url/http_host/ACS come from THIS "
+            "host instead of the signed Destination (mirrors TEN-141 Defect A)."
+        ),
+    )
+    parser.add_argument(
+        "--request-scheme",
+        choices=["http", "https"],
+        help="Request scheme for --request-host mode. Defaults to the Destination scheme.",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help=(
+            "Emit a single-line JSON verdict on stdout (result=validated|rejected|"
+            "config_error, plus email or reason) for machine callers like the "
+            "mimic ACS endpoint. Diagnostics go to stderr."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -384,13 +442,24 @@ def main(argv: list[str] | None = None) -> int:
         )
         return EXIT_CONFIG
 
+    # --json reserves stdout for the single machine verdict; diagnostics -> stderr.
+    def emit_info(message: str) -> None:
+        print(message, file=sys.stderr if args.json else sys.stdout)
+
     saml_response_b64, xml_bytes = _load_response(args.fixture)
     destination = _parse_destination(xml_bytes, args.fixture)
-    parts = _derive_request_parts(destination, normalize_public_host)
+    parts = _derive_request_parts(
+        destination,
+        normalize_public_host,
+        request_host=args.request_host,
+        request_scheme=args.request_scheme,
+    )
     idp_config = _build_idp_config(args, parts["acs_url"])
 
     # Mirror tenetx/api/routes/auth.py:828-835 as closely as a request-less
-    # harness can: derive host/scheme/port/script_name from the real Destination.
+    # harness can. Default mode derives host/scheme/port from the signed
+    # Destination; --request-host mode derives them from the request host
+    # (TEN-141 Defect A) - see _derive_request_parts.
     request_data = {
         "https": "on" if parts["https"] else "off",
         "http_host": parts["http_host"],
@@ -400,14 +469,14 @@ def main(argv: list[str] | None = None) -> int:
         "post_data": {"SAMLResponse": saml_response_b64},
     }
 
-    print(f"[harness] product root : {_PRODUCT_ROOT}")
-    print(f"[harness] Destination  : {destination}  (read from the response, not guessed)")
-    print(
+    emit_info(f"[harness] product root : {_PRODUCT_ROOT}")
+    emit_info(f"[harness] Destination  : {destination}  (read from the response, not guessed)")
+    emit_info(
         f"[harness] request_data : https={request_data['https']} "
         f"http_host={request_data['http_host']} script_name={request_data['script_name']} "
         f"server_port={request_data['server_port']}"
     )
-    print(
+    emit_info(
         f"[harness] sp_base_url  : {parts['sp_base_url']}  |  "
         f"saml_acs_url={idp_config['saml_acs_url']}"
     )
@@ -419,7 +488,10 @@ def main(argv: list[str] | None = None) -> int:
             sp_base_url=parts["sp_base_url"],
         )
     except SAMLConfigurationError as exc:
-        print(f"[harness] SAMLConfigurationError: {exc}")
+        if args.json:
+            print(json.dumps({"result": "config_error", "message": str(exc)}))
+        else:
+            print(f"[harness] SAMLConfigurationError: {exc}")
         _eprint(
             "ERROR: SAMLProvider could not be constructed (missing/invalid IdP "
             f"metadata): {exc}"
@@ -430,22 +502,33 @@ def main(argv: list[str] | None = None) -> int:
         assertion = provider.parse_and_validate_response(saml_response_b64, request_data)
     except SAMLValidationError as exc:
         # The real code embeds "... | Reason: <reason>" in this message
-        # (saml.py:239-244). We simply surface it - never call a nonexistent
-        # provider.get_last_error_reason().
-        print(f"[harness] SAMLValidationError: {exc}")
+        # (saml.py:239-244). We surface that verbatim - never call a nonexistent
+        # provider.get_last_error_reason(). This is TEN-141 Defect B's fix: the
+        # SPECIFIC reason reaches the caller instead of a generic code.
+        if args.json:
+            print(json.dumps({"result": "rejected", "reason": str(exc)}))
+        else:
+            print(f"[harness] SAMLValidationError: {exc}")
         return EXIT_OK
     except SAMLConfigurationError as exc:  # pragma: no cover - defensive
-        print(f"[harness] SAMLConfigurationError during validation: {exc}")
+        if args.json:
+            print(json.dumps({"result": "config_error", "message": str(exc)}))
+        else:
+            print(f"[harness] SAMLConfigurationError during validation: {exc}")
         return EXIT_CONFIG
 
-    # Benign-success branch: validation returned an assertion (e.g. the
-    # missing-AttributeStatement warning path in saml.py:226-238). This is NOT
-    # a crash and NOT a reproduction of the TEN-141 failure.
     email = getattr(assertion, "email", None)
-    print(
-        f"VALIDATED (no error) - assertion.email={email} - this run did NOT "
-        "reproduce the TEN-141 failure, re-check inputs"
-    )
+    name_id = getattr(assertion, "name_id", None)
+    if args.json:
+        print(json.dumps({"result": "validated", "email": email, "name_id": name_id}))
+    else:
+        # Benign-success branch: validation returned an assertion (e.g. the
+        # missing-AttributeStatement warning path in saml.py:226-238). This is
+        # NOT a crash and NOT a reproduction of the TEN-141 failure.
+        print(
+            f"VALIDATED (no error) - assertion.email={email} - this run did NOT "
+            "reproduce the TEN-141 failure, re-check inputs"
+        )
     return EXIT_OK
 
 

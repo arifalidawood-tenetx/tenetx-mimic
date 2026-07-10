@@ -16,6 +16,32 @@ vi.mock("firebase/firestore", () => ({
 const KEYCLOAK_METADATA_URL =
   "https://keycloak.arifalidawood.com/realms/tenetx-mimic/protocol/saml/descriptor";
 
+const XML_WITH_SLO = `<?xml version="1.0"?>
+<EntityDescriptor entityID="https://idp.example/entity">
+  <IDPSSODescriptor>
+    <SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://idp.example/sso"/>
+    <SingleLogoutService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://idp.example/slo/post"/>
+    <SingleLogoutService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://idp.example/slo/redirect"/>
+    <X509Certificate>ABCDEF</X509Certificate>
+  </IDPSSODescriptor>
+</EntityDescriptor>`;
+
+const XML_WITHOUT_SLO = `<?xml version="1.0"?>
+<EntityDescriptor entityID="https://idp.example/entity">
+  <IDPSSODescriptor>
+    <SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://idp.example/sso"/>
+    <X509Certificate>ABCDEF</X509Certificate>
+  </IDPSSODescriptor>
+</EntityDescriptor>`;
+
+// jsdom v23's File does not implement Blob.text(), which the Upload-XML flow
+// awaits — define it so the client-side parser can be exercised from a test.
+function makeXmlFile(xml: string): File {
+  const file = new File([xml], "idp-metadata.xml", { type: "text/xml" });
+  Object.defineProperty(file, "text", { value: () => Promise.resolve(xml), configurable: true });
+  return file;
+}
+
 function mockSuccessfulTestConnection() {
   vi.stubGlobal(
     "fetch",
@@ -24,6 +50,7 @@ function mockSuccessfulTestConnection() {
       json: async () => ({
         entity_id: "https://keycloak.arifalidawood.com/realms/tenetx-mimic",
         sso_url: "https://keycloak.arifalidawood.com/realms/tenetx-mimic/protocol/saml",
+        slo_url: "https://keycloak.arifalidawood.com/realms/tenetx-mimic/protocol/saml/slo",
         certificate: "FAKE_CERT_BASE64",
       }),
     })
@@ -81,6 +108,7 @@ describe("SamlConfigPage", () => {
       idpType: "keycloak",
       entity_id: "https://keycloak.arifalidawood.com/realms/tenetx-mimic",
       sso_url: "https://keycloak.arifalidawood.com/realms/tenetx-mimic/protocol/saml",
+      slo_url: "https://keycloak.arifalidawood.com/realms/tenetx-mimic/protocol/saml/slo",
       certificate: "FAKE_CERT_BASE64",
       metadataUrl: KEYCLOAK_METADATA_URL,
       verifiedAt: "SERVER_TIMESTAMP_SENTINEL",
@@ -108,5 +136,45 @@ describe("SamlConfigPage", () => {
     expect(alert).toHaveTextContent("Missing or insufficient permissions.");
     // No crash: the Save button remains present and re-enabled for a retry.
     expect(screen.getByRole("button", { name: "Save Configuration" })).toBeInTheDocument();
+  });
+
+  it("parses SingleLogoutService from an uploaded XML and threads slo_url into the Firestore payload (client parser)", async () => {
+    vi.mocked(addDoc).mockResolvedValueOnce({ id: "docSlo" } as never);
+
+    render(<SamlConfigPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Upload XML" }));
+    const fileInput = screen.getByLabelText("Upload IdP metadata XML");
+    const file = makeXmlFile(XML_WITH_SLO);
+    fireEvent.change(fileInput, { target: { files: [file] } });
+    await screen.findByText("Verified");
+
+    fireEvent.click(screen.getByRole("button", { name: "Save Configuration" }));
+    await screen.findByText(/docSlo/);
+
+    expect(addDoc).toHaveBeenCalledTimes(1);
+    const [, payload] = vi.mocked(addDoc).mock.calls[0];
+    expect(payload).toMatchObject({
+      provider: "saml",
+      entity_id: "https://idp.example/entity",
+      sso_url: "https://idp.example/sso",
+      slo_url: "https://idp.example/slo/redirect",
+    });
+  });
+
+  it('sets slo_url to "" when an uploaded XML has no SingleLogoutService (client parser)', async () => {
+    vi.mocked(addDoc).mockResolvedValueOnce({ id: "docNoSlo" } as never);
+
+    render(<SamlConfigPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Upload XML" }));
+    const fileInput = screen.getByLabelText("Upload IdP metadata XML");
+    const file = makeXmlFile(XML_WITHOUT_SLO);
+    fireEvent.change(fileInput, { target: { files: [file] } });
+    await screen.findByText("Verified");
+
+    fireEvent.click(screen.getByRole("button", { name: "Save Configuration" }));
+    await screen.findByText(/docNoSlo/);
+
+    const [, payload] = vi.mocked(addDoc).mock.calls[0];
+    expect(payload).toMatchObject({ slo_url: "" });
   });
 });

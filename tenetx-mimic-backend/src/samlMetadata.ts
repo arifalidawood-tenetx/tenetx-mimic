@@ -3,6 +3,7 @@ import { XMLParser } from 'fast-xml-parser';
 export interface SamlMetadataResult {
   entity_id: string;
   sso_url: string;
+  slo_url: string;
   certificate: string;
 }
 
@@ -65,6 +66,21 @@ export function parseSamlMetadata(xml: string): SamlMetadataResult | null {
     }
   }
 
+  // SLO prefers HTTP-Redirect (SAML SLO's standard binding) over HTTP-POST by
+  // binding, not document order — unlike the SSO scan above (first supported).
+  let sloUrl = '';
+  const sloServices = findAll(doc, 'SingleLogoutService');
+  for (const preferredBinding of ['HTTP-Redirect', 'HTTP-POST']) {
+    for (const svc of sloServices) {
+      const binding = svc?.['@_Binding'] ?? '';
+      if (binding.includes(preferredBinding)) {
+        sloUrl = svc?.['@_Location'] ?? '';
+        if (sloUrl) break;
+      }
+    }
+    if (sloUrl) break;
+  }
+
   const certNode = findAll(doc, 'X509Certificate')[0];
   const rawCert = (typeof certNode === 'string' ? certNode : certNode?.['#text'] ?? '')
     .toString()
@@ -73,5 +89,5 @@ export function parseSamlMetadata(xml: string): SamlMetadataResult | null {
 
   if (!entityId && !ssoUrl && !certificate) return null;
 
-  return { entity_id: entityId, sso_url: ssoUrl, certificate };
+  return { entity_id: entityId, sso_url: ssoUrl, slo_url: sloUrl, certificate };
 }
