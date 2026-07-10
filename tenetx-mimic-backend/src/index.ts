@@ -282,7 +282,8 @@ function validateCapturedResponse(
   fixturePath: string,
   host: string,
   scheme: 'http' | 'https',
-  overrideIdp?: MimicIdpConnection | null
+  overrideIdp?: MimicIdpConnection | null,
+  log: import('pino').Logger = logger
 ): Promise<SamlVerdict> {
   const args = [harnessPath, '--fixture', fixturePath, '--json', '--request-scheme', scheme];
   if (host) args.push('--request-host', host);
@@ -309,6 +310,7 @@ function validateCapturedResponse(
         resolvePromise(verdict);
       }
     };
+    log.debug({ harness: 'validateCapturedResponse' }, 'invoking SAML harness subprocess');
     const child = spawn(resolvePythonExecutable(), args, { windowsHide: true });
     const timer = setTimeout(() => {
       child.kill();
@@ -344,7 +346,8 @@ function requestSamlLogin(
   returnUrl: string,
   idpEntityId: string,
   idpSsoUrl: string,
-  idpCert: string
+  idpCert: string,
+  log: import('pino').Logger = logger
 ): Promise<SamlLoginResult> {
   const args = [
     loginHarnessPath,
@@ -366,6 +369,7 @@ function requestSamlLogin(
         resolvePromise(result);
       }
     };
+    log.debug({ harness: 'requestSamlLogin' }, 'invoking SAML harness subprocess');
     const child = spawn(resolvePythonExecutable(), args, { windowsHide: true });
     const timer = setTimeout(() => {
       child.kill();
@@ -407,7 +411,8 @@ function requestSamlLogout(
   idpEntityId: string,
   idpSloUrl: string,
   idpCert: string,
-  nameId: string
+  nameId: string,
+  log: import('pino').Logger = logger
 ): Promise<SamlLogoutResult> {
   const args = [
     logoutHarnessPath,
@@ -432,6 +437,7 @@ function requestSamlLogout(
         resolvePromise(result);
       }
     };
+    log.debug({ harness: 'requestSamlLogout' }, 'invoking SAML harness subprocess');
     const child = spawn(resolvePythonExecutable(), args, { windowsHide: true });
     const timer = setTimeout(() => {
       child.kill();
@@ -471,7 +477,8 @@ function processSamlLogout(
   idpCert: string,
   samlResponse: string,
   samlRequest: string,
-  relayState: string
+  relayState: string,
+  log: import('pino').Logger = logger
 ): Promise<SamlLogoutResult> {
   const args = [logoutHarnessPath, 'process', '--sp-sls-url', spSlsUrl, '--json'];
   if (idpEntityId) args.push('--idp-entity-id', idpEntityId);
@@ -491,6 +498,7 @@ function processSamlLogout(
         resolvePromise(result);
       }
     };
+    log.debug({ harness: 'processSamlLogout' }, 'invoking SAML harness subprocess');
     const child = spawn(resolvePythonExecutable(), args, { windowsHide: true });
     const timer = setTimeout(() => {
       child.kill();
@@ -623,10 +631,10 @@ app.post('/saml/acs', async (req: Request, res: Response) => {
     // A connectionDocId resolves this tester's own IdP identity from Firestore;
     // null (doc missing / lookup failed) falls back to the MIMIC_IDP_* env vars.
     const overrideIdp = decoded?.connectionDocId
-      ? await getMimicIdpConnection(decoded.connectionDocId)
+      ? await getMimicIdpConnection(decoded.connectionDocId, req.log)
       : null;
 
-    const verdict = await validateCapturedResponse(filePath, host, scheme, overrideIdp);
+    const verdict = await validateCapturedResponse(filePath, host, scheme, overrideIdp, req.log);
 
     // OPEN-REDIRECT GUARD: 302 to the SPA only when RelayState decoded non-null
     // AND its returnUrl origin is on the CORS allowlist. The `decoded &&` is
@@ -734,7 +742,8 @@ app.get('/saml/login', async (req: Request, res: Response) => {
       encodeRelayState({ returnUrl, connectionDocId: connectionDocId || undefined }),
       idpEntityId,
       idpSsoUrl,
-      idpCert
+      idpCert,
+      req.log
     );
     if (result.result === 'redirect' && result.url) {
       res.redirect(302, result.url);
@@ -785,7 +794,8 @@ app.get('/saml/logout', async (req: Request, res: Response) => {
       idpEntityId,
       idpSloUrl,
       idpCert,
-      nameId
+      nameId,
+      req.log
     );
     if (result.result === 'redirect' && result.url) {
       res.redirect(302, result.url);
@@ -833,7 +843,7 @@ app.get('/saml/sls', async (req: Request, res: Response) => {
   // AND a connectionDocId rode in on RelayState, so the existing query-param
   // tests keep taking the direct path unchanged.
   if (!idpEntityId && !idpSloUrl && !idpCert && decoded?.connectionDocId) {
-    const resolved = await getMimicIdpConnection(decoded.connectionDocId);
+    const resolved = await getMimicIdpConnection(decoded.connectionDocId, req.log);
     if (resolved) {
       idpEntityId = resolved.entity_id;
       idpSloUrl = resolved.slo_url;
@@ -852,7 +862,8 @@ app.get('/saml/sls', async (req: Request, res: Response) => {
       idpCert,
       samlResponse,
       samlRequest,
-      relayState
+      relayState,
+      req.log
     );
   } catch (error) {
     logger.error({ err: error }, 'SAML logout processing errored');

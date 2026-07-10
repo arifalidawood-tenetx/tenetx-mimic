@@ -67,13 +67,14 @@ function coerceString(value: unknown): string {
  */
 export async function getMimicIdpConnection(
   connectionDocId: string,
+  log: import('pino').Logger = logger,
 ): Promise<MimicIdpConnection | null> {
   // Re-checked on EVERY call, independent of the memoized client, so an unset
   // token always degrades to `null` — even after the singleton was already
   // built by an earlier call with the token present.
   const refreshToken = process.env.FIREBASE_REFRESH_TOKEN;
   if (!refreshToken) {
-    logger.warn(
+    log.warn(
       'getMimicIdpConnection: FIREBASE_REFRESH_TOKEN not set; returning null (no per-tester IdP override).',
     );
     return null;
@@ -84,7 +85,7 @@ export async function getMimicIdpConnection(
     const snap = await db.collection(COLLECTION).doc(connectionDocId).get();
 
     if (!snap.exists) {
-      logger.warn(
+      log.warn(
         { connectionDocId },
         'getMimicIdpConnection: no mimic_idp_connections doc found; returning null.',
       );
@@ -96,7 +97,7 @@ export async function getMimicIdpConnection(
 
     // An entity_id-less "connection" is unusable as a SAML IdP identity.
     if (!entity_id) {
-      logger.warn(
+      log.warn(
         { connectionDocId },
         'getMimicIdpConnection: doc has no entity_id; returning null.',
       );
@@ -110,7 +111,7 @@ export async function getMimicIdpConnection(
       certificate: coerceString(data.certificate),
     };
   } catch (err) {
-    logger.warn(
+    log.warn(
       { connectionDocId, err },
       'getMimicIdpConnection: Firestore lookup failed; returning null.',
     );

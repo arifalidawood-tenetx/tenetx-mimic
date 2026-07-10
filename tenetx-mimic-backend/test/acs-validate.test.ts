@@ -214,7 +214,7 @@ describe.skipIf(!canRunLiveValidation)(
         { 'X-Forwarded-Host': SP_HOST, 'X-Forwarded-Proto': 'https' },
         relayState
       );
-      expect(getMimicIdpConnection).toHaveBeenCalledWith('conn-override-doc');
+      expect(getMimicIdpConnection).toHaveBeenCalledWith('conn-override-doc', expect.anything());
       expect(res.status).toBe(302);
       const url = new URL(res.headers.get('location')!);
       expect(url.origin).toBe(RELAY_ORIGIN);
@@ -236,7 +236,7 @@ describe.skipIf(!canRunLiveValidation)(
         { 'X-Forwarded-Host': SP_HOST, 'X-Forwarded-Proto': 'https' },
         relayState
       );
-      expect(getMimicIdpConnection).toHaveBeenCalledWith('conn-missing-doc');
+      expect(getMimicIdpConnection).toHaveBeenCalledWith('conn-missing-doc', expect.anything());
       expect(res.status).toBe(302);
       const url = new URL(res.headers.get('location')!);
       expect(url.origin).toBe(RELAY_ORIGIN);

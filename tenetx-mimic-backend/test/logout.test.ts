@@ -219,7 +219,7 @@ describe.skipIf(!canRunLiveSlo)('GET /saml/sls (real SLO via python3-saml)', () 
         }),
       });
 
-      expect(getMimicIdpConnection).toHaveBeenCalledWith('conn-sls-doc');
+      expect(getMimicIdpConnection).toHaveBeenCalledWith('conn-sls-doc', expect.anything());
       expect(res.status).toBe(302);
       const location = res.headers.get('location');
       expect(location).toBeTruthy();
