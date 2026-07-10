@@ -333,3 +333,46 @@ Added to `AttemptDetailPage.test.tsx`, a new case `"wraps the nested SamlConfigP
 `npx vitest run src/pages/TryItOutPage.test.tsx src/pages/SamlConfigPage.test.tsx src/pages/AttemptDetailPage.test.tsx` → **25/25 passed** (4 + 8 + 13, the 13th being the new max-w-3xl/single-h1 test added this todo; `AttemptDetailPage.test.tsx`'s pre-existing `screen.getByText("Configure SSO")` assertion, line 75, still passes unmodified — text preserved, only the element's tag/scale changed from `<h1 className="text-lg...">` to `<h2>` via `SectionHeader`). `npx tsc --noEmit -p tsconfig.json` → exits 0.
 
 Only `src/pages/TryItOutPage.tsx`, `src/pages/SamlConfigPage.tsx`, `src/pages/AttemptDetailPage.tsx` (single mount-line only), and `src/pages/AttemptDetailPage.test.tsx` (one new test added, zero existing tests modified) touched for this todo.
+
+## Todo 11 — TryItOutPage RECOVERY (2026-07-10) — reapplying styling lost to a concurrent git race
+
+The earlier Todo 11 `TryItOutPage.tsx` styling commit was silently lost: a concurrent, unrelated boulder session rewrote this same file with a completely new realm/ticket-verification business-logic flow (`useParams()` ticket, `realm`/`authentikMetadataUrl` state, `handleVerifyRealm()`, Firestore hydrate `useEffect`, `mimic_idp_connections` doc writes) in between, and that rewrite's own commit didn't carry the prior styling diff forward (same class of race documented earlier in this file for `src/index.css`/`PageContainer.tsx`, just a second occurrence on a different file).
+
+Re-read the CURRENT file fresh (confirmed a materially different structure vs. the version styled originally) and reapplied ONLY the styling delta on top of it, leaving 100% of the realm-verification logic untouched:
+
+- Outer wrapper `mx-auto max-w-2xl space-y-6 p-6` → `<PageContainer size="narrow" className="space-y-6">` (import added).
+- `<h1>` → `text-2xl sm:text-3xl font-bold tracking-tight text-ink`.
+- `<h2>{guidance.label} — field values</h2>` → `<SectionHeader icon="sliders">...</SectionHeader>` (import added to the existing `Badge, Button, Segmented` line from `@/components/ui`).
+- `<h2>Launch login</h2>` → `<SectionHeader icon="zap">Launch login</SectionHeader>`.
+- 4 panels found matching `rounded-lg bg-card-2 ... ring-1 ring-line` → `rounded-xl ... shadow-sm hover:shadow-md transition-shadow` (radius/shadow only, existing padding/spacing classes untouched): field-values card, warning/gotcha card (`bg-warning-soft` variant), "Verify your ... setup" card, launch-login card.
+- **New judgment call — 5th potential panel left OUT of scope:** the file now also has a nested "verified metadata result" card (`rounded-lg bg-card p-3 ring-1 ring-line`, appears only after a successful verify). Its background is `bg-card` (single-level surface), NOT `bg-card-2` — a deliberately different, nested-sub-panel treatment distinct from the outer `bg-card-2` cards. Since the task's pinned pattern explicitly names `rounded-lg bg-card-2 ring-1 ring-line`, and this one doesn't match that background, left its radius/shadow untouched (still `rounded-lg`, no shadow) rather than inventing a 5th conversion not covered by the pinned instruction. Flagging here in case a future pass wants this nested card visually harmonized too.
+- **"Verify your {guidance.label} setup" `<h2>` intentionally left as plain text** (not converted to `SectionHeader`) — matches instruction #7's explicit "only field values and Launch login were pinned" constraint; consistent with the same choice already made for the neighboring gotcha-panel's `<h2>{guidance.gotcha.title}</h2>` in the original Todo 11 pass.
+- Zero changes to: `handleVerifyRealm`, the ticket-hydration `useEffect`, `sanitizeRealm`, `connectionDocId`, any state/handlers, or the realm/authentik-metadata-URL input JSX itself (only its parent card's className changed).
+
+### Verification
+
+- `npx vitest run src/pages/TryItOutPage.test.tsx` → **15/15 passed** (this file was expanded with new realm-verification tests since the original pass; none collided with the styling changes — no test asserts on any of the touched className strings).
+- `npx tsc --noEmit -p tsconfig.json` → exits 0.
+- `npx vitest run` (full suite) → **20 files / 141 tests, all green**.
+- Committed IMMEDIATELY and ALONE: `git add src/pages/TryItOutPage.tsx` (confirmed via `git status --short` that no other file was staged) then committed as `06ee20a`. `git show --stat 06ee20a` confirms **exactly one file** (`src/pages/TryItOutPage.tsx`, 1 file changed, 11 insertions/10 deletions) in the commit. Re-read the file fresh immediately after committing — matches the intended edit exactly, no repeat of the earlier silent-overwrite failure mode.
+
+**Commit:** `refactor(try-it-out): reapply PageContainer(narrow)/SectionHeader/rounded-xl+shadow styling on top of the realm-verification rewrite` (`06ee20a`)
+
+## Todo 13 (2026-07-10) — Final DESIGN.md verification + full regression + build gates
+
+All Todos 1-12 and 14 (post-review fixes) completed and independently verified by the orchestrator. This final todo:
+
+1. **Re-verified DESIGN.md Sections 3, 4, 5, 7 against ACTUAL final code:**
+   - Section 3 (Typography): page titles `text-2xl sm:text-3xl font-bold tracking-tight` ✓ (DashboardPage.tsx:179, AttemptDetailPage.tsx:184, TryItOutPage.tsx, SamlConfigPage.tsx all match); `SectionHeader` `text-lg font-semibold` ✓ (ui.tsx:124); body `text-sm` ✓; code/mono `text-sm font-mono` ✓ (AttemptDetailPage.tsx:26 SOLUTION_BLOCK_CLASSES); stat/KPI `text-4xl font-black` ✓ (DashboardPage.tsx:186).
+   - Section 4 (Spacing & Layout): `PageContainer` wide=1152px/narrow=768px ✓ (PageContainer.tsx:8-9); sidebar 256px (`w-64`), fixed at `lg:top-[49px] lg:bottom-0 lg:left-0` ✓ (TopBar.tsx:94), Ctrl+B toggle ✓ (TopBar.tsx:75-87), collapses below `lg` ✓ (TopBar.tsx:95 cn() conditional).
+   - Section 5 (Components): `PageContainer`, `SectionHeader`, `TopBar` sidebar/drawer shape all documented and verified ✓.
+   - Section 7 (Depth & Surface): `rounded-xl` cards + `shadow-sm→shadow-md` hover ✓ (AttemptDetailPage.tsx:191, DashboardPage.tsx:193/209/232, TryItOutPage.tsx, SamlConfigPage.tsx); `rounded-lg` buttons/inputs ✓ (ui.tsx:37); stat-pill `rounded-lg` exception ✓ (DashboardPage.tsx:185); `rounded-full` pills ✓ (ui.tsx:103 Badge).
+
+2. **Full regression suite:**
+   - `npx vitest run` (whole project, no path filter): **20 files / 141 tests, 100% pass** (0 skipped, 0 new failures vs. baseline).
+   - `npx tsc --noEmit -p tsconfig.json`: **exits 0** (no orphaned imports, no type errors).
+   - `npm run build`: **exits 0** (bundling success, 1.2MB JS + 27.5KB CSS).
+
+3. **DESIGN.md status:** All 7 sections fully finalized, zero "provisional" notes remaining, zero `[specify]`/placeholder brackets. Document is production-ready.
+
+**Commit:** `docs(design): finalize DESIGN.md typography/layout/components/depth sections`
