@@ -380,6 +380,7 @@ export function TryItOutPage() {
       idpEntityId: verifiedMetadata.entity_id,
       idpCert: verifiedMetadata.certificate,
       returnUrl: window.location.href,
+      connectionDocId: connectionDocId(ticket, idpType),
     });
     if (loginBanner?.kind === "validated" && loginBanner.email) {
       params.set("nameId", loginBanner.email);

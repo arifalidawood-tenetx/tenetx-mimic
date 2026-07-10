@@ -424,6 +424,10 @@ describe("TryItOutPage", () => {
       );
       expect(calledUrl.searchParams.get("idpCert")).toBe("FAKE_CERT_BASE64");
       expect(calledUrl.searchParams.get("returnUrl")).toBe(currentHref);
+      // Todo 7: the same deterministic doc ID as todo 6's login case —
+      // general route (no ticket) + Keycloak default → "general_keycloak" —
+      // so the SLS callback can resolve this tester's own IdP identity.
+      expect(calledUrl.searchParams.get("connectionDocId")).toBe("general_keycloak");
       expect(calledUrl.searchParams.has("nameId")).toBe(false);
     } finally {
       Object.defineProperty(window, "location", {
