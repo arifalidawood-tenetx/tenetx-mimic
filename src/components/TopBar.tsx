@@ -91,7 +91,7 @@ export function TopBar() {
       {authorized && (
         <aside
           className={cn(
-            "hidden lg:sticky lg:top-0 lg:h-screen lg:w-64 lg:shrink-0 lg:flex-col lg:border-r lg:border-line lg:bg-bg",
+            "hidden lg:fixed lg:bottom-0 lg:left-0 lg:top-[49px] lg:w-64 lg:flex-col lg:border-r lg:border-line lg:bg-bg",
             sidebarCollapsed ? "lg:hidden" : "lg:flex"
           )}
         >
