@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { collection, getDocs, query, where } from "firebase/firestore";
 import { db } from "@/lib/firebaseClient";
-import { Badge, Button, Spinner, type Tone } from "@/components/ui";
+import { Badge, Button, SectionHeader, Spinner, type Tone } from "@/components/ui";
 import { Icon } from "@/components/icons";
 import { DiffView } from "@/components/DiffView";
 import { cn } from "@/utils/cn";
@@ -23,7 +23,7 @@ export const TRY_IT_OUT_ROUTE = "/mimic/try-it-out";
  * (long prose lines wrap) while `DiffView` needs `whitespace-pre` (diff
  * lines must not wrap), so each call site adds its own. */
 const SOLUTION_BLOCK_CLASSES =
-  "overflow-auto rounded-lg bg-card-2 p-4 text-sm leading-relaxed text-ink ring-1 ring-line";
+  "overflow-auto rounded-xl bg-card-2 p-4 text-sm font-mono leading-relaxed text-ink ring-1 ring-line shadow-sm";
 
 const DIFF_FENCE_RE = /```diff\n([\s\S]*?)```/;
 const DIFF_MARKER_RE = /(^|\n)(--- a\/|\+\+\+ b\/|@@ )/;
@@ -188,8 +188,8 @@ export function AttemptDetailPage() {
       </div>
 
       {doc.relatedTickets && doc.relatedTickets.length > 0 && (
-        <div className="space-y-1">
-          <h2 className="text-sm font-semibold text-ink">Related tickets</h2>
+        <div className="rounded-xl bg-card-2 p-4 ring-1 ring-line shadow-sm hover:shadow-md transition-shadow space-y-2">
+          <SectionHeader icon="branch">Related tickets</SectionHeader>
           <div className="flex flex-wrap gap-2">
             {doc.relatedTickets.map((t) => (
               <a
@@ -217,14 +217,10 @@ export function AttemptDetailPage() {
         </a>
       )}
 
-      {feature === "saml-config" && (
-        <div className="border-t border-line pt-6">
-          <SamlConfigPage />
-        </div>
-      )}
+      {feature === "saml-config" && <SamlConfigPage />}
 
        {feature === "saml-login-fix" && (
-         <div className="border-t border-line pt-6 space-y-4">
+         <div className="space-y-4">
            <Link
              to={`/mimic/${ticket}/try-it-out`}
              className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-accent px-3.5 text-sm font-medium text-on-accent shadow-sm transition hover:brightness-110 active:scale-[0.98]"
@@ -234,8 +230,8 @@ export function AttemptDetailPage() {
            </Link>
 
           {doc.notes && (
-            <div className="space-y-1">
-              <h2 className="text-sm font-semibold text-ink">Live verification</h2>
+            <div className="rounded-xl bg-card-2 p-4 ring-1 ring-line shadow-sm hover:shadow-md transition-shadow space-y-2">
+              <SectionHeader icon="check">Live verification</SectionHeader>
               <p className="text-sm text-ink-muted whitespace-pre-wrap">{doc.notes}</p>
             </div>
           )}
@@ -243,25 +239,25 @@ export function AttemptDetailPage() {
       )}
 
       {(feature === "saml-login-fix" || feature === "windows-server-managed-hook-fix" || feature === "windows-installer-idempotent-reinstall-fix") && (
-        <div className="border-t border-line pt-6 space-y-4">
+        <div className="space-y-4">
           {doc.rootCause && (
-            <div className="space-y-1">
-              <h2 className="text-sm font-semibold text-ink">Root cause</h2>
-              <p className="text-sm text-ink-muted">{doc.rootCause}</p>
+            <div className="rounded-xl bg-card-2 p-4 ring-1 ring-line shadow-sm hover:shadow-md transition-shadow space-y-2">
+              <SectionHeader icon="alert">Root cause</SectionHeader>
+              <p className="text-sm text-ink-muted max-w-prose">{doc.rootCause}</p>
             </div>
           )}
 
           {doc.diffSummary && (
-            <div className="space-y-1">
-              <h2 className="text-sm font-semibold text-ink">Diff summary</h2>
-              <p className="text-sm text-ink-muted">{doc.diffSummary}</p>
+            <div className="rounded-xl bg-card-2 p-4 ring-1 ring-line shadow-sm hover:shadow-md transition-shadow space-y-2">
+              <SectionHeader icon="layers">Diff summary</SectionHeader>
+              <p className="text-sm text-ink-muted max-w-prose">{doc.diffSummary}</p>
             </div>
           )}
 
           {doc.solutionMarkdown && (
-            <div className="space-y-1">
+            <div className="rounded-xl bg-card-2 p-4 ring-1 ring-line shadow-sm hover:shadow-md transition-shadow space-y-2">
               <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-ink">Full solution</h2>
+                <SectionHeader icon="code">Full solution</SectionHeader>
                 <Button
                   variant="subtle"
                   size="sm"
