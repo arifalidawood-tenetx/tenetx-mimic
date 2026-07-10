@@ -322,6 +322,10 @@ describe("TryItOutPage", () => {
       );
       expect(calledUrl.searchParams.get("idpCert")).toBe("FAKE_CERT_BASE64");
       expect(calledUrl.searchParams.get("returnUrl")).toBe(currentHref);
+      // Todo 6: the same deterministic doc ID `handleVerifyRealm`'s `setDoc`
+      // used — general route (no ticket) + Keycloak default → "general_keycloak"
+      // — so the ACS callback can resolve this tester's own IdP identity.
+      expect(calledUrl.searchParams.get("connectionDocId")).toBe("general_keycloak");
     } finally {
       Object.defineProperty(window, "location", {
         configurable: true,

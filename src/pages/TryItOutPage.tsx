@@ -360,6 +360,7 @@ export function TryItOutPage() {
       idpSsoUrl: verifiedMetadata.sso_url,
       idpCert: verifiedMetadata.certificate,
       returnUrl: window.location.href,
+      connectionDocId: connectionDocId(ticket, idpType),
     });
     window.location.assign(`${SAML_PROXY_URL}/saml/login?${params.toString()}`);
   }
