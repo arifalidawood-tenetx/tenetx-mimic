@@ -180,3 +180,14 @@ Rebuilt `src/pages/DashboardPage.tsx` per the plan's exact pinned classes:
 `npx vitest run src/pages/DashboardPage.test.tsx --reporter=verbose` → **7/7 passed** (2 original + 5 new), including the original `"features replicated"` literal-text assertion untouched. `npx tsc --noEmit -p tsconfig.json` → exits 0.
 
 Only `src/pages/DashboardPage.tsx` and `src/pages/DashboardPage.test.tsx` touched/committed for this todo. Did not touch `AttemptDetailPage.tsx`, `TryItOutPage.tsx`, `SamlConfigPage.tsx`, `TopBar.tsx`, or `App.tsx` (other subagents' concurrent scope).
+
+## Todo 12 (2026-07-10) — Breadcrumb padding scale alignment
+
+Single-class update: `src/components/Breadcrumb.tsx`'s `<nav>` className changed from `"px-4 pb-2 sm:px-6"` to `"px-4 pb-2 sm:px-6 lg:px-8"` (adds the `lg` breakpoint horizontal padding step to match `PageContainer`'s responsive scale, aligning the breadcrumb horizontally with the page container at desktop widths).
+
+### Verification
+
+- `npx vitest run src/components/Breadcrumb.test.tsx` → **4/4 passed** (all existing cases unmodified). Neither of the file's 2 class-level assertions target the `<nav>`'s padding (they check `<ol>` and `<li>` classes respectively), so this update is safe.
+- `npx tsc --noEmit -p tsconfig.json` → exits 0.
+
+Only `src/components/Breadcrumb.tsx` modified (no test file edits needed).
