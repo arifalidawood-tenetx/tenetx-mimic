@@ -60,7 +60,7 @@ const FIREBASE_TOOLS_CLIENT_SECRET = 'j9iVZfS8kkCEFUPaAeJV0sAi';
 
 const firebaseRefreshToken = process.env.FIREBASE_REFRESH_TOKEN;
 if (!firebaseRefreshToken) {
-  console.warn(
+  logger.warn(
     'FIREBASE_REFRESH_TOKEN not set. Auth middleware will reject all requests.'
   );
 } else {
@@ -78,7 +78,7 @@ if (!firebaseRefreshToken) {
       projectId: 'tenetx-qa-scores',
     });
   } catch (error) {
-    console.error('Failed to initialize Firebase Admin SDK:', error);
+    logger.error({ err: error }, 'Failed to initialize Firebase Admin SDK');
     process.exit(1);
   }
 }
@@ -128,7 +128,7 @@ const authMiddleware = async (
 
     next();
   } catch (error) {
-    console.error('Token verification failed:', error);
+    logger.error({ err: error }, 'Token verification failed');
     res.status(401).json({ error: 'Invalid or expired token' });
   }
 };
@@ -173,7 +173,7 @@ app.post(
       }
       xml = await response.text();
     } catch (error) {
-      console.error('Metadata fetch failed:', error);
+      logger.error({ err: error }, 'Metadata fetch failed');
       res.status(502).json({ error: 'failed to fetch metadata' });
       return;
     }
@@ -583,22 +583,30 @@ app.post('/saml/acs', async (req: Request, res: Response) => {
     mkdirSync(capturedDir, { recursive: true });
     writeFileSync(filePath, `# captured ${capturedAt} (UTC)\n${samlResponse}\n`, 'utf-8');
   } catch (error) {
-    console.error('Failed to persist captured SAMLResponse:', error);
+    logger.error({ err: error }, 'Failed to persist captured SAMLResponse');
     res.status(500).json({ error: 'failed to persist SAMLResponse' });
     return;
   }
 
-  // Decode + print the XML so a human can watch the capture live during the
-  // manual login. Buffer is built-in; the /></g split puts one element per line
-  // for readability. Best-effort — a decode failure must not fail a capture that
-  // already succeeded on disk above.
+  // Decode + debug-log the XML so a human can watch the capture live during a
+  // manual login (gated behind LOG_LEVEL=debug — a no-op otherwise). The /></g
+  // split puts one element per line for readability. Best-effort — a decode
+  // failure must not fail a capture that already succeeded on disk above.
   try {
     const xml = Buffer.from(samlResponse, 'base64').toString('utf-8');
-    console.log(`\n=== SAMLResponse captured -> ${filePath} ===`);
-    console.log(xml.replace(/></g, '>\n<'));
-    console.log('=== end SAMLResponse ===\n');
+    // SECURITY: signed SAMLResponses (Keycloak/Authentik, samlMetadata.ts:11-12)
+    // embed the IdP's <ds:X509Certificate> inline, so strip it BEFORE logging —
+    // samlResponseXml is not in REDACT_CONFIG and is safe only once cert-free.
+    const sanitizedXml = xml.replace(
+      /<([\w-]+:)?X509Certificate>[\s\S]*?<\/([\w-]+:)?X509Certificate>/gi,
+      '<X509Certificate>[REDACTED]</X509Certificate>'
+    );
+    logger.debug(
+      { filePath, samlResponseXml: sanitizedXml.replace(/></g, '>\n<') },
+      'SAMLResponse captured'
+    );
   } catch (error) {
-    console.warn('Could not base64-decode SAMLResponse for console preview:', error);
+    logger.warn({ err: error }, 'Could not base64-decode SAMLResponse for console preview');
   }
 
   const capturedNote = '<p>SAMLResponse captured to <code>.captured/</code></p>';
@@ -672,7 +680,7 @@ app.post('/saml/acs', async (req: Request, res: Response) => {
           '</body></html>'
       );
   } catch (error) {
-    console.error('Live SAML validation errored:', error);
+    logger.error({ err: error }, 'Live SAML validation errored');
     res
       .status(200)
       .type('html')
@@ -736,7 +744,7 @@ app.get('/saml/login', async (req: Request, res: Response) => {
     // raw traceback, never a hung request).
     res.status(502).json({ error: result.message || 'login request failed' });
   } catch (error) {
-    console.error('SAML login request errored:', error);
+    logger.error({ err: error }, 'SAML login request errored');
     res.status(502).json({ error: 'login request could not run' });
   }
 });
@@ -785,7 +793,7 @@ app.get('/saml/logout', async (req: Request, res: Response) => {
     }
     res.status(502).json({ error: result.message || 'logout request failed' });
   } catch (error) {
-    console.error('SAML logout request errored:', error);
+    logger.error({ err: error }, 'SAML logout request errored');
     res.status(502).json({ error: 'logout request could not run' });
   }
 });
@@ -847,7 +855,7 @@ app.get('/saml/sls', async (req: Request, res: Response) => {
       relayState
     );
   } catch (error) {
-    console.error('SAML logout processing errored:', error);
+    logger.error({ err: error }, 'SAML logout processing errored');
     result = { result: 'error', message: 'logout processing could not run' };
   }
 
