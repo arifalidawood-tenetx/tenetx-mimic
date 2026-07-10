@@ -100,13 +100,31 @@ export function Badge({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium leading-none",
+        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold leading-none",
         TONE_CLASSES[tone],
         className
       )}
     >
       {children}
     </span>
+  );
+}
+
+/* ── SectionHeader ──────────────────────────────────────────────────────── */
+export function SectionHeader({
+  icon,
+  children,
+  className,
+}: {
+  icon?: IconName;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <h2 className={cn("flex items-center gap-2 text-lg font-semibold text-ink", className)}>
+      {icon && <Icon name={icon} className="h-4 w-4 shrink-0 text-ink-muted" aria-hidden="true" />}
+      {children}
+    </h2>
   );
 }
 
