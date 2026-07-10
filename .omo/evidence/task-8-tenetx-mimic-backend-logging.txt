@@ -1,0 +1,2 @@
+=== Verification 1: Variable Coverage ==={   "missingFromExample": [],   "exampleVarCount": 11,   "hasAllNewLoggingVars": true }
+=== Verification 2: Secret Leak Check ==={   "leaked": [] }
