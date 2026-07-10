@@ -72,12 +72,18 @@ describe('getMimicIdpConnection', () => {
     const result = await getMimicIdpConnection('missing-doc');
 
     expect(result).toBeNull();
+    // Regression guard: the "no doc" warn path must route through the structured
+    // logger (todos 5/7 migrated it), NEVER raw console.warn.
+    expect(console.warn).not.toHaveBeenCalled();
   });
 
   it('returns null (never an unhandled rejection) when Firestore throws', async () => {
     mockGet.mockRejectedValueOnce(new Error('Firestore unavailable'));
 
     await expect(getMimicIdpConnection('boom')).resolves.toBeNull();
+    // Regression guard: the "Firestore throws" warn path must route through the
+    // structured logger (todos 5/7 migrated it), NEVER raw console.warn.
+    expect(console.warn).not.toHaveBeenCalled();
   });
 
   it('returns null when the doc is missing entity_id', async () => {
@@ -93,6 +99,9 @@ describe('getMimicIdpConnection', () => {
     const result = await getMimicIdpConnection('no-entity-id');
 
     expect(result).toBeNull();
+    // Regression guard: the "no entity_id" warn path must route through the
+    // structured logger (todos 5/7 migrated it), NEVER raw console.warn.
+    expect(console.warn).not.toHaveBeenCalled();
   });
 
   it('coerces missing / wrong-typed sso_url, slo_url, certificate to empty strings', async () => {
@@ -122,5 +131,8 @@ describe('getMimicIdpConnection', () => {
     await expect(getMimicIdpConnection('any-doc')).resolves.toBeNull();
     // Must short-circuit before ever touching Firestore.
     expect(mockGet).not.toHaveBeenCalled();
+    // Regression guard: the "token unset" warn path must route through the
+    // structured logger (todos 5/7 migrated it), NEVER raw console.warn.
+    expect(console.warn).not.toHaveBeenCalled();
   });
 });

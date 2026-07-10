@@ -72,4 +72,16 @@ describe('POST /saml/acs', () => {
 
     expect(listCaptured().length).toBe(before);
   });
+
+  it('sets an X-Request-Id response header (UUID shape) on every response', async () => {
+    // createHttpLogger() sets X-Request-Id on EVERY response; the 400 path is
+    // used deliberately so no capture file is written as a side effect.
+    const res = await fetch(`${baseUrl}/saml/acs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: '',
+    });
+
+    expect(res.headers.get('x-request-id')).toMatch(/^[0-9a-f-]{36}$/);
+  });
 });
