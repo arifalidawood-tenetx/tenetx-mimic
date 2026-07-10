@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { existsSync, readFileSync, rmSync, mkdtempSync } from 'fs';
 import { join, dirname } from 'path';
 import { tmpdir } from 'os';
@@ -8,6 +8,12 @@ import type { AddressInfo } from 'net';
 import type { Server } from 'http';
 import { app } from '../src/index.js';
 import { verifyStatus } from '../src/statusToken.js';
+import { encodeRelayState } from '../src/relayState.js';
+import { getMimicIdpConnection } from '../src/mimicConnections.js';
+
+vi.mock('../src/mimicConnections.js', () => ({
+  getMimicIdpConnection: vi.fn(),
+}));
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(testDir, '..');
@@ -189,6 +195,55 @@ describe.skipIf(!canRunLiveValidation)(
       expect(res.headers.get('location')).toBeNull();
       const html = await res.text();
       expect(html).toContain('Login succeeded');
+    });
+
+    it('Firestore override: a composite RelayState connectionDocId resolving to a real connection validates via that inline --idp-cert identity (env-var block skipped)', async () => {
+      vi.mocked(getMimicIdpConnection).mockReset();
+      vi.mocked(getMimicIdpConnection).mockResolvedValueOnce({
+        entity_id: meta.idp_entity_id,
+        sso_url: meta.idp_sso_url,
+        slo_url: '',
+        certificate: readFileSync(meta.cert_pem, 'utf-8'),
+      });
+      const relayState = encodeRelayState({
+        returnUrl: RELAY_URL,
+        connectionDocId: 'conn-override-doc',
+      });
+      const res = await postAcs(
+        signedB64,
+        { 'X-Forwarded-Host': SP_HOST, 'X-Forwarded-Proto': 'https' },
+        relayState
+      );
+      expect(getMimicIdpConnection).toHaveBeenCalledWith('conn-override-doc');
+      expect(res.status).toBe(302);
+      const url = new URL(res.headers.get('location')!);
+      expect(url.origin).toBe(RELAY_ORIGIN);
+      const payload = verifyStatus(url.searchParams.get('samlStatus')!);
+      expect(payload).toBeTruthy();
+      expect(payload!.status).toBe('validated');
+      expect(payload!.email).toBe(meta.email);
+    });
+
+    it('Firestore miss: a composite RelayState connectionDocId resolving to null falls back to the MIMIC_IDP_* env-var identity', async () => {
+      vi.mocked(getMimicIdpConnection).mockReset();
+      vi.mocked(getMimicIdpConnection).mockResolvedValueOnce(null);
+      const relayState = encodeRelayState({
+        returnUrl: RELAY_URL,
+        connectionDocId: 'conn-missing-doc',
+      });
+      const res = await postAcs(
+        signedB64,
+        { 'X-Forwarded-Host': SP_HOST, 'X-Forwarded-Proto': 'https' },
+        relayState
+      );
+      expect(getMimicIdpConnection).toHaveBeenCalledWith('conn-missing-doc');
+      expect(res.status).toBe(302);
+      const url = new URL(res.headers.get('location')!);
+      expect(url.origin).toBe(RELAY_ORIGIN);
+      const payload = verifyStatus(url.searchParams.get('samlStatus')!);
+      expect(payload).toBeTruthy();
+      expect(payload!.status).toBe('validated');
+      expect(payload!.email).toBe(meta.email);
     });
   }
 );

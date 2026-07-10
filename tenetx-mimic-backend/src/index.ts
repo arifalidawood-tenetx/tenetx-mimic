@@ -8,7 +8,8 @@ import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
 import { parseSamlMetadata, isAllowedMetadataHost } from './samlMetadata.js';
 import { signStatus } from './statusToken.js';
-import { encodeRelayState } from './relayState.js';
+import { encodeRelayState, decodeRelayState } from './relayState.js';
+import { getMimicIdpConnection, MimicIdpConnection } from './mimicConnections.js';
 
 // Exported for tests (mounted on an ephemeral port); the app.listen() at the
 // bottom is guarded to run only when this module is executed directly.
@@ -272,13 +273,23 @@ function parseLastJsonLine<T = SamlVerdict>(stdout: string): T | null {
 function validateCapturedResponse(
   fixturePath: string,
   host: string,
-  scheme: 'http' | 'https'
+  scheme: 'http' | 'https',
+  overrideIdp?: MimicIdpConnection | null
 ): Promise<SamlVerdict> {
   const args = [harnessPath, '--fixture', fixturePath, '--json', '--request-scheme', scheme];
   if (host) args.push('--request-host', host);
-  if (process.env.MIMIC_IDP_ENTITY_ID) args.push('--idp-entity-id', process.env.MIMIC_IDP_ENTITY_ID);
-  if (process.env.MIMIC_IDP_SSO_URL) args.push('--idp-sso-url', process.env.MIMIC_IDP_SSO_URL);
-  if (process.env.MIMIC_IDP_CERT_FILE) args.push('--idp-cert-file', process.env.MIMIC_IDP_CERT_FILE);
+  // Per-tester override (todo 4): a resolved Firestore connection is already a
+  // full PEM, so it rides as inline --idp-cert (NOT --idp-cert-file). No override
+  // → today's MIMIC_IDP_* env-var identity, unchanged.
+  if (overrideIdp) {
+    args.push('--idp-entity-id', overrideIdp.entity_id);
+    if (overrideIdp.sso_url) args.push('--idp-sso-url', overrideIdp.sso_url);
+    if (overrideIdp.certificate) args.push('--idp-cert', overrideIdp.certificate);
+  } else {
+    if (process.env.MIMIC_IDP_ENTITY_ID) args.push('--idp-entity-id', process.env.MIMIC_IDP_ENTITY_ID);
+    if (process.env.MIMIC_IDP_SSO_URL) args.push('--idp-sso-url', process.env.MIMIC_IDP_SSO_URL);
+    if (process.env.MIMIC_IDP_CERT_FILE) args.push('--idp-cert-file', process.env.MIMIC_IDP_CERT_FILE);
+  }
 
   return new Promise<SamlVerdict>((resolvePromise) => {
     let stdout = '';
@@ -575,21 +586,32 @@ app.post('/saml/acs', async (req: Request, res: Response) => {
   try {
     const host = deriveRequestHost(req);
     const scheme = deriveRequestScheme(req);
-    const verdict = await validateCapturedResponse(filePath, host, scheme);
 
-    // SP-initiated logins (/saml/login) echo RelayState back here. Only when
-    // its origin matches the CORS allowlist — an OPEN-REDIRECT GUARD, we must
-    // never 302 to an untrusted origin — do we hand the verdict to the SPA as a
-    // signed samlStatus token. Absent/foreign RelayState falls through to the
-    // UNCHANGED raw-HTML responses below (keeps the no-RelayState tests intact).
-    const relayState = req.body?.RelayState;
-    if (typeof relayState === 'string' && relayState && isAllowedRelayState(relayState)) {
+    const rawRelayState = req.body?.RelayState;
+    const decoded =
+      typeof rawRelayState === 'string' && rawRelayState
+        ? decodeRelayState(rawRelayState)
+        : null;
+
+    // A connectionDocId resolves this tester's own IdP identity from Firestore;
+    // null (doc missing / lookup failed) falls back to the MIMIC_IDP_* env vars.
+    const overrideIdp = decoded?.connectionDocId
+      ? await getMimicIdpConnection(decoded.connectionDocId)
+      : null;
+
+    const verdict = await validateCapturedResponse(filePath, host, scheme, overrideIdp);
+
+    // OPEN-REDIRECT GUARD: 302 to the SPA only when RelayState decoded non-null
+    // AND its returnUrl origin is on the CORS allowlist. The `decoded &&` is
+    // load-bearing — no-RelayState callbacks decode to null and MUST fall through
+    // to the raw-HTML responses below (not throw on decoded.returnUrl).
+    if (decoded && isAllowedRelayState(decoded.returnUrl)) {
       const token = signStatus({
         status: verdict.result,
         email: verdict.email ?? null,
         reason: verdict.reason ?? null,
       });
-      res.redirect(302, `${relayState}?samlStatus=${token}`);
+      res.redirect(302, `${decoded.returnUrl}?samlStatus=${token}`);
       return;
     }
 
