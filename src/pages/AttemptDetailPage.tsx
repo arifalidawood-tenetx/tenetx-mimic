@@ -1,9 +1,70 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { collection, getDocs, query, where } from "firebase/firestore";
 import { db } from "@/lib/firebaseClient";
 import { Badge, Button, Spinner, type Tone } from "@/components/ui";
+import { Icon } from "@/components/icons";
+import { DiffView } from "@/components/DiffView";
+import { cn } from "@/utils/cn";
+import { PageContainer } from "@/components/PageContainer";
 import { SamlConfigPage } from "./SamlConfigPage";
+
+/** General fallback route for the guided live-login wizard (TryItOutPage, todo 3).
+ * Kept as a named constant for potential fallback use and test imports, but the
+ * "Try it out" CTA for saml-login-fix now uses a computed ticket-nested route
+ * instead: `/mimic/${ticket}/try-it-out`. This constant remains exported in case
+ * other code or tests reference it. */
+export const TRY_IT_OUT_ROUTE = "/mimic/try-it-out";
+
+/** Shared visual treatment for the solution block, whether rendered as a
+ * plain `<pre>` (non-diff / prose segments) or as `DiffView` (the detected
+ * diff segment) — kept in one place so both stay in sync. Deliberately
+ * excludes a `whitespace-*` class: `<pre>` needs `whitespace-pre-wrap`
+ * (long prose lines wrap) while `DiffView` needs `whitespace-pre` (diff
+ * lines must not wrap), so each call site adds its own. */
+const SOLUTION_BLOCK_CLASSES =
+  "overflow-auto rounded-lg bg-card-2 p-4 text-sm leading-relaxed text-ink ring-1 ring-line";
+
+const DIFF_FENCE_RE = /```diff\n([\s\S]*?)```/;
+const DIFF_MARKER_RE = /(^|\n)(--- a\/|\+\+\+ b\/|@@ )/;
+
+interface SolutionSplit {
+  before: string;
+  diff: string;
+  after: string;
+}
+
+/**
+ * Detects a unified-diff block inside `solutionMarkdown` and splits it into
+ * a prose "before" segment, the diff body (rendered via `DiffView`), and a
+ * prose "after" segment (still rendered via the existing `<pre>`). Prefers
+ * an explicit ```diff fenced block when present (the shape the task-9
+ * evidence markdown deliverable uses); otherwise falls back to treating
+ * everything from the first raw diff marker (`--- a/`, `+++ b/`, `@@ `)
+ * onward as the diff body. Returns null when no diff markers are found at
+ * all, so callers fall back to rendering the whole string as before —
+ * zero regression for non-diff `solutionMarkdown` content.
+ */
+function splitSolutionMarkdown(markdown: string): SolutionSplit | null {
+  const fenceMatch = markdown.match(DIFF_FENCE_RE);
+  if (fenceMatch) {
+    const [full, diffBody] = fenceMatch;
+    const idx = markdown.indexOf(full);
+    return {
+      before: markdown.slice(0, idx),
+      diff: diffBody.replace(/\n$/, ""),
+      after: markdown.slice(idx + full.length),
+    };
+  }
+
+  const markerMatch = markdown.match(DIFF_MARKER_RE);
+  if (!markerMatch || markerMatch.index === undefined) return null;
+
+  let start = markerMatch.index;
+  if (markdown[start] === "\n") start += 1;
+
+  return { before: markdown.slice(0, start), diff: markdown.slice(start), after: "" };
+}
 
 /**
  * Shape of a `mimic_features` doc (schema defined by todo 15 — see
@@ -94,34 +155,36 @@ export function AttemptDetailPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center gap-2 p-6 text-sm text-ink-muted">
-        <Spinner className="h-4 w-4" />
-        Loading attempt…
-      </div>
+      <PageContainer size="wide" className="space-y-8">
+        <div className="flex items-center gap-2 text-sm text-ink-muted">
+          <Spinner className="h-4 w-4" />
+          Loading attempt…
+        </div>
+      </PageContainer>
     );
   }
 
   if (notFound || !doc) {
     return (
-      <div className="p-6">
+      <PageContainer size="wide" className="space-y-8">
         <h2 className="text-lg font-semibold text-ink">Attempt not found</h2>
         <p className="mt-2 text-sm text-ink-muted">
           No tracked attempt matches {ticket}/{feature}/{attempt}.
         </p>
-      </div>
+      </PageContainer>
     );
   }
 
   const tone = STATUS_TONE[doc.status] ?? "neutral";
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6 p-6">
+    <PageContainer size="wide" className="space-y-8">
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-lg font-semibold text-ink">{doc.title}</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-ink">{doc.title}</h1>
           <Badge tone={tone}>{doc.status}</Badge>
         </div>
-        {doc.description && <p className="text-sm text-ink-muted">{doc.description}</p>}
+        {doc.description && <p className="text-sm text-ink-muted max-w-prose">{doc.description}</p>}
       </div>
 
       {doc.relatedTickets && doc.relatedTickets.length > 0 && (
@@ -160,7 +223,26 @@ export function AttemptDetailPage() {
         </div>
       )}
 
-      {(feature === "saml-login-fix" || feature === "windows-server-managed-hook-fix") && (
+       {feature === "saml-login-fix" && (
+         <div className="border-t border-line pt-6 space-y-4">
+           <Link
+             to={`/mimic/${ticket}/try-it-out`}
+             className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-accent px-3.5 text-sm font-medium text-on-accent shadow-sm transition hover:brightness-110 active:scale-[0.98]"
+           >
+             <Icon name="zap" className="h-4 w-4 shrink-0" />
+             Try it out
+           </Link>
+
+          {doc.notes && (
+            <div className="space-y-1">
+              <h2 className="text-sm font-semibold text-ink">Live verification</h2>
+              <p className="text-sm text-ink-muted whitespace-pre-wrap">{doc.notes}</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {(feature === "saml-login-fix" || feature === "windows-server-managed-hook-fix" || feature === "windows-installer-idempotent-reinstall-fix") && (
         <div className="border-t border-line pt-6 space-y-4">
           {doc.rootCause && (
             <div className="space-y-1">
@@ -192,13 +274,35 @@ export function AttemptDetailPage() {
                   {copied ? "Copied!" : "Copy"}
                 </Button>
               </div>
-              <pre className="overflow-auto whitespace-pre-wrap rounded-lg bg-card-2 p-3 text-xs text-ink ring-1 ring-line">
-                {doc.solutionMarkdown}
-              </pre>
+              {(() => {
+                const split = splitSolutionMarkdown(doc.solutionMarkdown);
+                if (!split) {
+                  return (
+                    <pre className={cn(SOLUTION_BLOCK_CLASSES, "whitespace-pre-wrap")}>
+                      {doc.solutionMarkdown}
+                    </pre>
+                  );
+                }
+                return (
+                  <div className="space-y-2">
+                    {split.before.trim() && (
+                      <pre className={cn(SOLUTION_BLOCK_CLASSES, "whitespace-pre-wrap")}>
+                        {split.before.trim()}
+                      </pre>
+                    )}
+                    <DiffView diff={split.diff} className={SOLUTION_BLOCK_CLASSES} />
+                    {split.after.trim() && (
+                      <pre className={cn(SOLUTION_BLOCK_CLASSES, "whitespace-pre-wrap")}>
+                        {split.after.trim()}
+                      </pre>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           )}
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }
