@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { collection, getDocs } from "firebase/firestore";
 import {
   Bar,
@@ -11,7 +11,8 @@ import {
   YAxis,
 } from "recharts";
 import { db } from "@/lib/firebaseClient";
-import { Badge, type Tone } from "@/components/ui";
+import { Badge, SectionHeader, type Tone } from "@/components/ui";
+import { PageContainer } from "@/components/PageContainer";
 
 /**
  * Mirrors the `mimic_features` schema defined by todo 15
@@ -45,6 +46,16 @@ const STATUS_LABEL: Record<FeatureStatus, string> = {
 
 const JIRA_BASE_URL = "https://daxnai.atlassian.net/browse/";
 
+/** The one other real top-level route in the app besides the dashboard/detail routes. */
+const TRY_IT_OUT_ROUTE = "/mimic/try-it-out";
+
+/** Reverse of `STATUS_LABEL`, for mapping a clicked chart bar back to a `FeatureStatus`. */
+const STATUS_KEY_BY_LABEL: Record<string, FeatureStatus> = {
+  Planned: "planned",
+  "In progress": "in-progress",
+  Done: "done",
+};
+
 function isFeatureStatus(value: unknown): value is FeatureStatus {
   return value === "planned" || value === "in-progress" || value === "done";
 }
@@ -76,10 +87,39 @@ function countByStatus(features: MimicFeature[]) {
   }));
 }
 
+/**
+ * Pure click-target resolver for the "Attempts by status" bar chart, kept
+ * separate from the component body so it can be unit-tested directly without
+ * touching Recharts/`ResponsiveContainer` (which render at 0x0 in jsdom and
+ * don't reliably dispatch click events there).
+ *
+ * - "Done": navigates to the first `status === "done"` feature's own
+ *   `routePath` (the exact field each feature row's "View attempt" link
+ *   already uses) — no-op (`null`) when no such feature exists yet.
+ * - "Planned" / "In progress": prefers a matching feature's `routePath` when
+ *   one exists (showing a real attempt beats a generic landing page), else
+ *   falls back to `/mimic/try-it-out` — the app's other real top-level route,
+ *   and a sensible "start here" destination when nothing at that status
+ *   exists yet.
+ */
+export function resolveChartClickTarget(
+  status: string,
+  features: MimicFeature[]
+): string | null {
+  const statusKey = STATUS_KEY_BY_LABEL[status];
+  if (!statusKey) return null;
+
+  const match = features.find((feature) => feature.status === statusKey);
+  if (match) return match.routePath;
+
+  return statusKey === "done" ? null : TRY_IT_OUT_ROUTE;
+}
+
 export function DashboardPage() {
   const [features, setFeatures] = useState<MimicFeature[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     let cancelled = false;
@@ -110,42 +150,47 @@ export function DashboardPage() {
 
   if (loading) {
     return (
-      <div className="p-6">
+      <PageContainer size="wide">
         <p className="text-sm text-ink-muted">Loading dashboard…</p>
-      </div>
+      </PageContainer>
     );
   }
 
   if (error) {
     return (
-      <div className="p-6">
+      <PageContainer size="wide">
         <p role="alert" className="text-sm text-danger">
           {error}
         </p>
-      </div>
+      </PageContainer>
     );
   }
 
   const chartData = countByStatus(features);
 
+  function handleBarClick(status: string) {
+    const target = resolveChartClickTarget(status, features);
+    if (target) navigate(target);
+  }
+
   return (
-    <div className="mx-auto max-w-4xl space-y-6 p-6">
+    <PageContainer size="wide" className="space-y-8">
       <div>
-        <h1 className="text-lg font-semibold text-ink">Dashboard</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-ink">Dashboard</h1>
         <p className="mt-1 text-sm text-ink-muted">
           All replicated features tracked in <code className="rounded bg-card-2 px-1">mimic_features</code>.
         </p>
       </div>
 
-      <div className="rounded-lg bg-card-2 p-4 ring-1 ring-line">
-        <p className="text-2xl font-semibold text-ink tnum">{features.length}</p>
-        <p className="text-sm text-ink-muted">
+      <div className="bg-accent-soft border border-accent/20 px-6 py-3 rounded-lg flex items-center gap-4">
+        <p className="text-4xl font-black text-ink tnum">{features.length}</p>
+        <p className="text-sm font-medium text-accent uppercase tracking-wider">
           {features.length === 1 ? "feature replicated" : "features replicated"}
         </p>
       </div>
 
       {features.length === 0 ? (
-        <div className="rounded-lg bg-card-2 p-6 text-center ring-1 ring-line">
+        <div className="rounded-xl bg-card-2 p-6 text-center ring-1 ring-line shadow-sm hover:shadow-md transition-shadow">
           <p className="text-sm font-medium text-ink">No features tracked yet.</p>
           <p className="mt-1 text-xs text-ink-muted">
             Seed a doc in <code className="rounded bg-card-3 px-1">mimic_features</code> to see it here.
@@ -153,11 +198,15 @@ export function DashboardPage() {
         </div>
       ) : (
         <>
-          <div className="space-y-2">
+          <div
+            className={
+              features.length > 1 ? "grid gap-3 sm:grid-cols-2 lg:grid-cols-3" : "space-y-2"
+            }
+          >
             {features.map((feature) => (
               <div
                 key={feature.id}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-card-2 p-4 ring-1 ring-line"
+                className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-card-2 p-4 ring-1 ring-line shadow-sm hover:shadow-md transition-shadow"
               >
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-ink">{feature.title}</p>
@@ -180,8 +229,10 @@ export function DashboardPage() {
             ))}
           </div>
 
-          <div className="rounded-lg bg-card-2 p-4 ring-1 ring-line">
-            <h2 className="mb-3 text-sm font-semibold text-ink">Attempts by status</h2>
+          <div className="rounded-xl bg-card-2 p-4 ring-1 ring-line shadow-sm hover:shadow-md transition-shadow">
+            <SectionHeader icon="gauge" className="mb-3">
+              Attempts by status
+            </SectionHeader>
             <div className="h-56 w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={chartData}>
@@ -196,13 +247,19 @@ export function DashboardPage() {
                       color: "var(--color-ink)",
                     }}
                   />
-                  <Bar dataKey="count" fill="var(--color-accent)" radius={[4, 4, 0, 0]} />
+                  <Bar
+                    dataKey="count"
+                    fill="var(--color-accent)"
+                    radius={[4, 4, 0, 0]}
+                    cursor="pointer"
+                    onClick={(data) => handleBarClick(data.payload.status)}
+                  />
                 </BarChart>
               </ResponsiveContainer>
             </div>
           </div>
         </>
       )}
-    </div>
+    </PageContainer>
   );
 }

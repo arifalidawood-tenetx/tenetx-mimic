@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { getDocs } from "firebase/firestore";
-import { DashboardPage } from "./DashboardPage";
+import { DashboardPage, resolveChartClickTarget } from "./DashboardPage";
 
 vi.mock("@/lib/firebaseClient", () => ({ auth: {}, db: {} }));
 
@@ -98,5 +98,63 @@ describe("DashboardPage", () => {
     await waitFor(() => expect(screen.getByText("0")).toBeInTheDocument());
     expect(screen.getByText("No features tracked yet.")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+});
+
+describe("resolveChartClickTarget", () => {
+  const doneFeature = {
+    id: "doc1",
+    ticketId: "TEN-135",
+    featureSlug: "saml-config",
+    attemptNumber: 1,
+    title: "SAML SSO configuration",
+    status: "done" as const,
+    routePath: "/mimic/TEN-135/saml-config/1",
+  };
+  const inProgressFeature = {
+    id: "doc2",
+    ticketId: "TEN-140",
+    featureSlug: "scim-sync",
+    attemptNumber: 1,
+    title: "SCIM group sync",
+    status: "in-progress" as const,
+    routePath: "/mimic/TEN-140/scim-sync/1",
+  };
+  const plannedFeature = {
+    id: "doc3",
+    ticketId: "TEN-144",
+    featureSlug: "audit-log",
+    attemptNumber: 2,
+    title: "Audit log export",
+    status: "planned" as const,
+    routePath: "/mimic/TEN-144/audit-log/2",
+  };
+
+  it("navigates 'Done' clicks to the first done feature's routePath", () => {
+    expect(
+      resolveChartClickTarget("Done", [plannedFeature, doneFeature, inProgressFeature])
+    ).toBe("/mimic/TEN-135/saml-config/1");
+  });
+
+  it("no-ops (returns null) for 'Done' when no done feature exists", () => {
+    expect(resolveChartClickTarget("Done", [plannedFeature, inProgressFeature])).toBeNull();
+  });
+
+  it("navigates 'Planned'/'In progress' to a matching feature's routePath when one exists", () => {
+    expect(resolveChartClickTarget("Planned", [plannedFeature])).toBe(
+      "/mimic/TEN-144/audit-log/2"
+    );
+    expect(resolveChartClickTarget("In progress", [inProgressFeature])).toBe(
+      "/mimic/TEN-140/scim-sync/1"
+    );
+  });
+
+  it("falls back to /mimic/try-it-out for 'Planned'/'In progress' with no matching feature", () => {
+    expect(resolveChartClickTarget("Planned", [doneFeature])).toBe("/mimic/try-it-out");
+    expect(resolveChartClickTarget("In progress", [doneFeature])).toBe("/mimic/try-it-out");
+  });
+
+  it("returns null for an unrecognized status label", () => {
+    expect(resolveChartClickTarget("Unknown", [doneFeature])).toBeNull();
   });
 });

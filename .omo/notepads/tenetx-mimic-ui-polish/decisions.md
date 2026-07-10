@@ -130,3 +130,30 @@ Added 1 new test to `TopBar.test.tsx` (existing 15 assertions untouched, byte-fo
 Hard constraints re-verified: HC#1 (single "TenetX Mimic home" link) and HC#2 (Sign-out gated on `authorized`) both untouched by this todo's edits — no home link exists in the footer/aside, and the entire `<aside>` block remains behind the same `{authorized && (...)}` guard as before.
 
 Only `src/components/TopBar.tsx` and `src/components/TopBar.test.tsx` touched/committed for this todo. Did NOT touch `App.tsx` (verified via `git diff --stat` before commit — parallel Todo-7 subagent's changes to that file are untouched by this work).
+
+## Todo 10 (2026-07-10) — DashboardPage: PageContainer, stat pill, responsive grid, rounded-xl cards, clickable status chart
+
+Rebuilt `src/pages/DashboardPage.tsx` per the plan's exact pinned classes:
+
+- Outer wrapper → `<PageContainer size="wide" className="space-y-8">`; loading/error early-returns also moved onto `<PageContainer size="wide">` (previously bare `<div className="p-6">`).
+- `<h1>` → `text-2xl sm:text-3xl font-bold tracking-tight text-ink`.
+- Stat card restyled into the "Overall Score"-pill: container `bg-accent-soft border border-accent/20 px-6 py-3 rounded-lg flex items-center gap-4` (the ONE intentional `rounded-lg` exception — left untouched, not "fixed" to `rounded-xl`); value `text-4xl font-black text-ink tnum`; label `text-sm font-medium text-accent uppercase tracking-wider`. **The exact literal text node/conditional `{features.length === 1 ? "feature replicated" : "features replicated"}` preserved byte-for-byte** — only wrapper/label/value classes changed, confirmed via the passing `DashboardPage.test.tsx:66`-equivalent assertion (`getByText("features replicated")`).
+- `<h2>Attempts by status</h2>` → `<SectionHeader icon="gauge" className="mb-3">Attempts by status</SectionHeader>` (imported from `./ui`/`@/components/ui`, already built in Todo 4).
+- Feature-list container: `grid gap-3 sm:grid-cols-2 lg:grid-cols-3` when `features.length > 1`, else `space-y-2` (single column) — conditional via a plain ternary, no `cn()` needed since the two class sets are mutually exclusive.
+- Every card surface converted to `rounded-xl ... shadow-sm hover:shadow-md transition-shadow`: chart panel, empty-state card, each feature row (all keep their existing `ring-1 ring-line`). Stat pill's `rounded-lg` is the one deliberate exception, matching the reference exactly.
+
+### New requirement — clickable status chart
+
+- Added `onClick={(data) => handleBarClick(data.payload.status)}` + `cursor="pointer"` to the `<Bar dataKey="count">` element. Recharts' `Bar` onClick receives a `BarRectangleItem` whose `payload` field is the original `chartData` row (`{ status, count }`); `data.payload.status` is `any`-typed by Recharts itself so no explicit cast needed, and `resolveChartClickTarget` validates it's a recognized label before acting.
+- Extracted the click-target logic into a standalone **exported pure function** `resolveChartClickTarget(status: string, features: MimicFeature[]): string | null` (top-level in `DashboardPage.tsx`, not inside the component) specifically so it's unit-testable without touching Recharts/`ResponsiveContainer` internals (which render at 0×0 in jsdom/Vitest and don't reliably dispatch real click events there — confirmed by reading `DashboardPage.test.tsx` first, which asserts zero chart-internals behavior today).
+- **Routes wired (2 of 3 status categories, as required):**
+  1. **"Done"** → first feature in the fetched `features` array with `status === "done"`, navigate to **its own `feature.routePath`** (the exact field each feature row's "View attempt" `<Link>` already uses — no new field invented). No "done" feature exists → no-op (`null`, no navigation, no crash).
+  2. **"Planned" / "In progress"** → **implemented behavior: prefer a matching feature's `routePath` if one exists at that status, else fall back to `/mimic/try-it-out`.** Why: showing a real, already-tracked attempt is more useful than always bouncing to the generic Try-it-out page when a matching feature exists (e.g. clicking "Planned" when there's a planned feature takes you straight to it); the generic `/mimic/try-it-out` fallback only kicks in when there's genuinely nothing at that status yet, which is exactly the "here's where to start" scenario the task description called out. This is a superset of the minimum requirement (which only required the plain `/mimic/try-it-out` fallback) and does not invent any new route — both destinations (`feature.routePath` values from fetched data, and the existing `/mimic/try-it-out` route) already exist.
+- `useNavigate()` from `react-router-dom` used (already a dependency, no new import path needed beyond adding it to the existing `import { Link, useNavigate } from "react-router-dom"` line).
+- Tests: added a `describe("resolveChartClickTarget", ...)` block to `DashboardPage.test.tsx` (5 new cases: Done→matching route, Done→no-op when none, Planned/In-progress→matching route, Planned/In-progress→try-it-out fallback, unrecognized label→null) — tests the pure function directly rather than driving Recharts DOM clicks, per the plan's own suggested mitigation for jsdom's 0×0 `ResponsiveContainer` rendering.
+
+### Test run
+
+`npx vitest run src/pages/DashboardPage.test.tsx --reporter=verbose` → **7/7 passed** (2 original + 5 new), including the original `"features replicated"` literal-text assertion untouched. `npx tsc --noEmit -p tsconfig.json` → exits 0.
+
+Only `src/pages/DashboardPage.tsx` and `src/pages/DashboardPage.test.tsx` touched/committed for this todo. Did not touch `AttemptDetailPage.tsx`, `TryItOutPage.tsx`, `SamlConfigPage.tsx`, `TopBar.tsx`, or `App.tsx` (other subagents' concurrent scope).
