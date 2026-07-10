@@ -191,3 +191,59 @@ Single-class update: `src/components/Breadcrumb.tsx`'s `<nav>` className changed
 - `npx tsc --noEmit -p tsconfig.json` → exits 0.
 
 Only `src/components/Breadcrumb.tsx` modified (no test file edits needed).
+
+## Todo 2 (2026-07-10) — Create DESIGN.md documenting the reference-aligned token/component system
+
+Created `DESIGN.md` at project root with all 7 mandatory sections populated with real, cited values from the currently-implemented system (post-Todo-1 recolor, post-Todos 3-10 component/layout work):
+
+### Section 1: Atmosphere & Identity
+Explicitly names the signature: "direct style copy of the `modern-qa-scoring-dashboard` reference: bold KPI-dashboard energy, blue accent (`#2563eb` light / `#3b82f6` dark, documented WCAG-AA split rationale), tonal-shift dark surfaces, `rounded-xl` card lift via shadow — PLUS a persistent left-nav sidebar shell (Ctrl+B togglable) this reference didn't have."
+
+### Section 2: Color
+Full token table (light | dark columns) matching `index.css` exactly:
+- Surfaces: `--surface-0` through `--surface-3` (canvas, cards, tertiary, overlay)
+- Text: `--ink`, `--ink-muted`, `--ink-faint`
+- Borders: `--line`, `--line-strong`
+- Status: `--success`, `--warning`, `--danger`
+- Accent: `#2563eb` (light) / `#3b82f6` (dark) with explicit WCAG-AA contrast rationale
+- Soft tints: derived via `color-mix()` (14-16% saturation)
+- Shadows: `--shadow-sm`, `--shadow-md`, `--shadow-lg` with light/dark tuning
+
+### Section 3: Typography
+System-font stack (no external dependencies), scale with weights:
+- Page titles: `text-2xl sm:text-3xl font-bold tracking-tight`
+- Section headers: `text-lg font-semibold`
+- Body: `text-sm`
+- Code/mono: `text-sm font-mono`
+- Stat/KPI: `text-4xl font-black`
+- Badge: `text-[11px] font-semibold`
+
+### Section 4: Spacing & Layout
+Container widths (`PageContainer` primitives):
+- Wide: `max-w-6xl` (1152px)
+- Narrow: `max-w-3xl` (768px)
+- Responsive padding: `px-4 py-6 / sm:px-6 sm:py-8 / lg:px-8 lg:py-10`
+Sidebar: `w-64` fixed at `lg:top-[49px] lg:bottom-0 lg:left-0`, Ctrl+B toggle, collapses to drawer below `lg`
+
+### Section 5: Components
+All 8 `ui.tsx` primitives documented (Button, IconButton, Badge, SectionHeader, Segmented, Tooltip, Skeleton, Spinner, SeverityDot), plus:
+- PageContainer (layout primitive)
+- TopBar (shell with sidebar/drawer)
+- DiffView (diff renderer)
+
+### Section 6: Motion & Interaction
+Animations (`rise`, `fade`), transitions, focus-ring, reduced-motion support, hover/card-lift patterns
+
+### Section 7: Depth & Surface
+Elevation model (3 layers), shape consistency lock:
+- Cards: `rounded-xl` + `shadow-sm→shadow-md` + `ring-1 ring-line`
+- Buttons/inputs: `rounded-lg`
+- Stat pill exception: `rounded-lg` (intentional, matches reference)
+- Pills/badges: `rounded-full`
+
+### Verification
+- Grep `DESIGN.md` for `[specify]`/`TODO` placeholder brackets → **zero matches** ✓
+- Every hex, token, class, and component name traces to actual source files (read and cited) ✓
+- All 7 section headers verbatim per the design-system-architecture template ✓
+
+**Commit:** `docs(design): create DESIGN.md documenting the reference-aligned token/component system`
