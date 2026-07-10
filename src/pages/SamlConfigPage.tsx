@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
-import { Badge, Button, Segmented } from "@/components/ui";
+import { Badge, Button, SectionHeader, Segmented } from "@/components/ui";
 import { useAuthState } from "@/lib/authState";
 import { db } from "@/lib/firebaseClient";
 
@@ -9,6 +9,7 @@ type Tab = "url" | "upload";
 interface VerifiedMetadata {
   entity_id: string;
   sso_url: string;
+  slo_url: string;
   certificate: string;
 }
 
@@ -33,7 +34,7 @@ function inferIdpType(metadataUrl: string): IdpType | undefined {
 
 // Client-side reimplementation of the metadata-XML parse used by the
 // Upload-XML tab (no server round-trip needed for a local file). DOMParser
-// is only available here in the browser context — the saml-proxy's Node
+// is only available here in the browser context — the tenetx-mimic-backend's Node
 // service (todo 9) has its own namespace-aware parser since DOMParser
 // doesn't exist in Node.
 function parseMetadataXmlClient(xmlString: string): VerifiedMetadata | null {
@@ -51,11 +52,25 @@ function parseMetadataXmlClient(xmlString: string): VerifiedMetadata | null {
       }
     });
 
+    // SLO prefers HTTP-Redirect (SAML SLO's standard binding) over HTTP-POST by
+    // binding, not document order — unlike the SSO scan above (first supported).
+    let sloUrl = "";
+    const sloServices = doc.querySelectorAll("SingleLogoutService");
+    for (const preferredBinding of ["HTTP-Redirect", "HTTP-POST"]) {
+      sloServices.forEach((svc) => {
+        const binding = svc.getAttribute("Binding") ?? "";
+        if (!sloUrl && binding.includes(preferredBinding)) {
+          sloUrl = svc.getAttribute("Location") ?? "";
+        }
+      });
+      if (sloUrl) break;
+    }
+
     const rawCert = doc.querySelector("X509Certificate")?.textContent?.trim() ?? "";
     const certificate = rawCert ? `-----BEGIN CERTIFICATE-----\n${rawCert}\n-----END CERTIFICATE-----` : "";
 
     if (!entityId && !ssoUrl && !certificate) return null;
-    return { entity_id: entityId, sso_url: ssoUrl, certificate };
+    return { entity_id: entityId, sso_url: ssoUrl, slo_url: sloUrl, certificate };
   } catch (err) {
     console.error("parseMetadataXmlClient failed:", err);
     return null;
@@ -104,10 +119,10 @@ export function SamlConfigPage() {
         return;
       }
        setResult(await response.json());
-     } catch (err) {
-       console.error("saml-proxy verify-metadata request failed:", err);
-       const message = err instanceof Error ? err.message : String(err);
-       setTestError(`Could not reach the saml-proxy service: ${message}`);
+      } catch (err) {
+        console.error("tenetx-mimic-backend verify-metadata request failed:", err);
+        const message = err instanceof Error ? err.message : String(err);
+        setTestError(`Could not reach the tenetx-mimic-backend service: ${message}`);
      } finally {
        setTesting(false);
      }
@@ -137,6 +152,7 @@ export function SamlConfigPage() {
         provider: "saml",
         entity_id: result.entity_id,
         sso_url: result.sso_url,
+        slo_url: result.slo_url,
         certificate: result.certificate,
         metadataUrl,
         verifiedAt: serverTimestamp(),
@@ -153,9 +169,10 @@ export function SamlConfigPage() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6 p-6">
+    // no PageContainer here — always rendered nested inside AttemptDetailPage's own PageContainer
+    <div className="space-y-6">
       <div>
-        <h1 className="text-lg font-semibold text-ink">Configure SSO</h1>
+        <SectionHeader icon="building">Configure SSO</SectionHeader>
         <p className="mt-1 text-sm text-ink-muted">
           Connect a SAML identity provider. This pass verifies IdP metadata only — it does not
           complete a signature-validated login (v2 candidate) and does not cover SCIM/group
@@ -174,7 +191,7 @@ export function SamlConfigPage() {
       />
 
       {tab === "url" && (
-        <div className="space-y-3 rounded-lg bg-card-2 p-4 ring-1 ring-line">
+        <div className="space-y-3 rounded-xl bg-card-2 p-4 ring-1 ring-line shadow-sm hover:shadow-md transition-shadow">
           <label htmlFor="metadata-url" className="text-sm font-medium text-ink">
             Metadata URL
           </label>
@@ -194,7 +211,7 @@ export function SamlConfigPage() {
       )}
 
       {tab === "upload" && (
-        <div className="space-y-3 rounded-lg bg-card-2 p-4 ring-1 ring-line">
+        <div className="space-y-3 rounded-xl bg-card-2 p-4 ring-1 ring-line shadow-sm hover:shadow-md transition-shadow">
           <label htmlFor="metadata-file" className="text-sm font-medium text-ink">
             Upload IdP metadata XML
           </label>
@@ -222,7 +239,7 @@ export function SamlConfigPage() {
       )}
 
       {result && (
-        <div className="space-y-2 rounded-lg bg-card-2 p-4 ring-1 ring-line">
+        <div className="space-y-2 rounded-xl bg-card-2 p-4 ring-1 ring-line shadow-sm hover:shadow-md transition-shadow">
           <div className="flex items-center gap-2">
             <Badge tone="success">Verified</Badge>
             <span className="text-sm font-medium text-ink">Identity provider metadata</span>
@@ -258,8 +275,8 @@ export function SamlConfigPage() {
         </div>
       )}
 
-      <div className="space-y-2 rounded-lg bg-card-2 p-4 ring-1 ring-line">
-        <h2 className="text-sm font-semibold text-ink">Service Provider values</h2>
+      <div className="space-y-2 rounded-xl bg-card-2 p-4 ring-1 ring-line shadow-sm hover:shadow-md transition-shadow">
+        <SectionHeader icon="sliders">Service Provider values</SectionHeader>
         <p className="text-xs text-ink-muted">
           Enter these into your identity provider when creating the SAML application.
         </p>
@@ -275,8 +292,8 @@ export function SamlConfigPage() {
         </dl>
       </div>
 
-      <div className="space-y-3 rounded-lg bg-card-2 p-4 ring-1 ring-line text-xs text-ink-muted">
-        <h2 className="text-sm font-semibold text-ink">Setup guidance</h2>
+      <div className="space-y-3 rounded-xl bg-card-2 p-4 ring-1 ring-line shadow-sm hover:shadow-md transition-shadow text-xs text-ink-muted">
+        <SectionHeader icon="info">Setup guidance</SectionHeader>
         <div>
           <p className="font-medium text-ink">Keycloak</p>
           <p>

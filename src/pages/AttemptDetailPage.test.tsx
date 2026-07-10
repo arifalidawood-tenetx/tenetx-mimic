@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { AttemptDetailPage } from "./AttemptDetailPage";
+import { AttemptDetailPage, TRY_IT_OUT_ROUTE } from "./AttemptDetailPage";
 
 const mockGetDocs = vi.fn();
 const mockWhere = vi.fn((field: string, op: string, value: unknown) => ({ field, op, value }));
@@ -73,6 +73,36 @@ describe("AttemptDetailPage", () => {
     // feature === "saml-config" also mounts SamlConfigPage (todo 13, previously
     // unmounted) as part of this attempt's detail view.
     expect(screen.getByText("Configure SSO")).toBeInTheDocument();
+  });
+
+  it("wraps the nested SamlConfigPage in a max-w-3xl container and renders exactly one page-title <h1>", async () => {
+    mockGetDocs.mockResolvedValue({
+      empty: false,
+      docs: [{ data: () => FIXTURE_DOC }],
+    });
+
+    renderAt("/mimic/TEN-135/saml-config/1");
+
+    await waitFor(() =>
+      expect(screen.getByText("Generic SAML/OIDC Config Page")).toBeInTheDocument()
+    );
+
+    // F1 fix: the nested SamlConfigPage renders at the same 768px width as
+    // TryItOutPage, not AttemptDetailPage's own 1152px PageContainer.
+    const nestedWrapper = screen.getByText("Configure SSO").closest(".max-w-3xl");
+    expect(nestedWrapper).not.toBeNull();
+    expect(nestedWrapper).toHaveClass("mx-auto", "max-w-3xl");
+
+    // F2 fix: "Configure SSO" is demoted to a SectionHeader (<h2>), so only
+    // AttemptDetailPage's own title renders at page-title scale.
+    const pageTitleHeadings = document.querySelectorAll(
+      "h1.text-2xl.sm\\:text-3xl.font-bold"
+    );
+    expect(pageTitleHeadings).toHaveLength(1);
+    expect(pageTitleHeadings[0]).toHaveTextContent("Generic SAML/OIDC Config Page");
+
+    const configureSsoHeading = screen.getByText("Configure SSO").closest("h2");
+    expect(configureSsoHeading).not.toBeNull();
   });
 
   it("shows a clear not-found state (not a crash) when the query returns zero docs", async () => {
@@ -201,8 +231,17 @@ describe("AttemptDetailPage", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Full solution")).toBeInTheDocument();
 
-    const pre = screen.getByText((_, node) => node?.tagName.toLowerCase() === "pre");
-    expect(pre).toHaveTextContent("verifySignature(assertion);");
+    // solutionMarkdown is a raw unified diff, so it now routes through
+    // DiffView (colored per-line divs) instead of the plain <pre> — no
+    // <pre> should be present for this diff-shaped content.
+    expect(
+      screen.queryByText((_, node) => node?.tagName.toLowerCase() === "pre")
+    ).not.toBeInTheDocument();
+    const addedLine = screen.getByText("+verifySignature(assertion);");
+    expect(addedLine).toHaveClass("bg-success-soft", "text-success");
+    const headerLine = screen.getByText("--- a/auth.ts");
+    expect(headerLine).not.toHaveClass("bg-success-soft");
+    expect(headerLine).not.toHaveClass("bg-danger-soft");
 
     const copyButton = screen.getByRole("button", { name: "Copy" });
     fireEvent.click(copyButton);
@@ -248,6 +287,75 @@ describe("AttemptDetailPage", () => {
     const pre = screen.getByText((_, node) => node?.tagName.toLowerCase() === "pre");
     expect(pre).toBeInTheDocument();
     expect(pre.textContent).toContain('server_hook_command_by_platform["windows"]');
+  });
+
+  it("renders root cause, diff summary, and the full solution when feature is windows-installer-idempotent-reinstall-fix", async () => {
+    mockGetDocs.mockResolvedValue({
+      empty: false,
+      docs: [
+        {
+          data: () => ({
+            ...FIXTURE_DOC,
+            featureSlug: "windows-installer-idempotent-reinstall-fix",
+            rootCause:
+              "Expand-Archive -Force deletes then re-extracts tenetx.exe, which fails Access Denied on an Administrators-owned file.",
+            diffSummary:
+              "Extract to a staging dir and Copy-Item each file in place instead of delete-then-extract.",
+            solutionMarkdown: '## Fix\n\n```\nCopy-Item -Path $_.FullName -Destination $target -Force\n```',
+          }),
+        },
+      ],
+    });
+
+    renderAt("/mimic/TENQA-29/windows-installer-idempotent-reinstall-fix/1");
+
+    await waitFor(() => expect(screen.getByText("Root cause")).toBeInTheDocument());
+    expect(
+      screen.getByText(
+        "Expand-Archive -Force deletes then re-extracts tenetx.exe, which fails Access Denied on an Administrators-owned file."
+      )
+    ).toBeInTheDocument();
+    expect(screen.getByText("Diff summary")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Extract to a staging dir and Copy-Item each file in place instead of delete-then-extract."
+      )
+    ).toBeInTheDocument();
+    expect(screen.getByText("Full solution")).toBeInTheDocument();
+    const pre = screen.getByText((_, node) => node?.tagName.toLowerCase() === "pre");
+    expect(pre).toBeInTheDocument();
+    expect(pre.textContent).toContain("Copy-Item -Path $_.FullName -Destination $target -Force");
+  });
+
+  it("shows a prominent 'Try it out' link pointing at the ticket-nested try-it-out route for saml-login-fix", async () => {
+     mockGetDocs.mockResolvedValue({
+       empty: false,
+       docs: [{ data: () => ({ ...FIXTURE_DOC, featureSlug: "saml-login-fix" }) }],
+     });
+ 
+     renderAt("/mimic/TEN-141/saml-login-fix/1");
+ 
+     await waitFor(() =>
+       expect(screen.getByText("Generic SAML/OIDC Config Page")).toBeInTheDocument()
+     );
+     const tryItOutLink = screen.getByRole("link", { name: /try it out/i });
+     expect(tryItOutLink).toHaveAttribute("href", "/mimic/TEN-141/try-it-out");
+     // TRY_IT_OUT_ROUTE is still exported as a general fallback constant, but not used by this CTA.
+     expect(TRY_IT_OUT_ROUTE).toBe("/mimic/try-it-out");
+   });
+
+  it("does not show the 'Try it out' link for features other than saml-login-fix", async () => {
+    mockGetDocs.mockResolvedValue({
+      empty: false,
+      docs: [{ data: () => FIXTURE_DOC }], // featureSlug: "saml-config"
+    });
+
+    renderAt("/mimic/TEN-135/saml-config/1");
+
+    await waitFor(() =>
+      expect(screen.getByText("Generic SAML/OIDC Config Page")).toBeInTheDocument()
+    );
+    expect(screen.queryByRole("link", { name: /try it out/i })).not.toBeInTheDocument();
   });
 
   it("does not crash and renders no saml-login-fix fields when they are undefined", async () => {

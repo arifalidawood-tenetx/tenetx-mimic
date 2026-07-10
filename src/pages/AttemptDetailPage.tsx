@@ -217,7 +217,11 @@ export function AttemptDetailPage() {
         </a>
       )}
 
-      {feature === "saml-config" && <SamlConfigPage />}
+      {feature === "saml-config" && (
+        <div className="mx-auto max-w-3xl">
+          <SamlConfigPage />
+        </div>
+      )}
 
        {feature === "saml-login-fix" && (
          <div className="space-y-4">

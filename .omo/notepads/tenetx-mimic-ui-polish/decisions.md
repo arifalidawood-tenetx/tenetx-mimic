@@ -247,3 +247,89 @@ Elevation model (3 layers), shape consistency lock:
 - All 7 section headers verbatim per the design-system-architecture template ✓
 
 **Commit:** `docs(design): create DESIGN.md documenting the reference-aligned token/component system`
+
+## Plan-Todo 8 + Plan-Todo 9 (2026-07-10) — AttemptDetailPage: PageContainer/title shell + card-panel sections
+
+(NB: numbering here is the CURRENT `.omo/plans/tenetx-mimic-ui-polish.md` TODOs list — items 8 and 9, "Rebuild AttemptDetailPage: container, title, metadata row" / "...: section cards, icons, font-mono fix, rounded-xl/shadow". Not to be confused with the differently-numbered "Todo 8" entry above from an earlier session, which was actually Ctrl+B sidebar work — that plan's numbering has since been renumbered/finalized.)
+
+Read the plan's Todo 8 + Todo 9 sections in full (lines 203-238) before editing. Re-read `AttemptDetailPage.tsx` fresh immediately before each edit pass since this file is shared with the concurrent `tenqa-29-idempotent-install-fix` boulder session — confirmed no unexpected drift between the two edit passes (file matched exactly what Todo 8's commit had produced).
+
+### Plan-Todo 8 — container/title/metadata (commit `af1c20b`)
+
+- Outer wrapper: `mx-auto max-w-2xl space-y-6 p-6` → `<PageContainer size="wide" className="space-y-8">` (import added from `@/components/PageContainer`).
+- `<h1>`: `text-lg font-semibold text-ink` → `text-2xl sm:text-3xl font-bold tracking-tight text-ink`.
+- Status `Badge` unchanged (already inline next to title via `flex flex-wrap items-center gap-2`).
+- `doc.description` paragraph gains `max-w-prose`.
+- Loading (`"Loading attempt…"`) and not-found (`"Attempt not found"`) early returns both moved onto `<PageContainer size="wide" className="space-y-8">` (dropped their old `p-6` div wrappers — `PageContainer` supplies its own responsive padding).
+- Zero changes to Firestore query logic, `useEffect`, `useParams`, or state — confirmed via diff, only JSX/classNames touched.
+- Final closing `</div>` → `</PageContainer>` to match the new outer element.
+
+### Plan-Todo 9 — section cards/icons/font-mono fix (commit `e28518d`)
+
+- `SOLUTION_BLOCK_CLASSES`: `"overflow-auto rounded-lg bg-card-2 p-4 text-sm leading-relaxed text-ink ring-1 ring-line"` → `"overflow-auto rounded-xl bg-card-2 p-4 text-sm font-mono leading-relaxed text-ink ring-1 ring-line shadow-sm"` — appends the missing `font-mono` (real bug fix, code/diff blocks were rendering in the body sans-serif font), `rounded-lg`→`rounded-xl`, adds `shadow-sm`.
+- `SectionHeader` imported from `@/components/ui` (alongside existing `Badge, Button, Spinner, type Tone`).
+- All 5 named sections converted to card panels — `rounded-xl bg-card-2 p-4 ring-1 ring-line shadow-sm hover:shadow-md transition-shadow space-y-2` wrapper + `<h2>`→`<SectionHeader icon="...">`:
+  - Related tickets → `icon="branch"`
+  - Root cause → `icon="alert"`, paragraph gains `max-w-prose`
+  - Diff summary → `icon="layers"`, paragraph gains `max-w-prose`
+  - Full solution → `icon="code"` (the inner `SOLUTION_BLOCK_CLASSES` code/diff block deliberately has NO `max-w-prose` — spans the full card width per the plan's explicit "no prose cap on code" instruction; this does produce a card-within-a-card look for the code block specifically, which is what the pinned acceptance criteria literally specifies)
+  - Live verification (inside the `saml-login-fix` block, `doc.notes`) → `icon="check"` — paragraph text left WITHOUT `max-w-prose` since the plan's `max-w-prose` instruction names only "Root cause / Diff summary paragraph text," not Live verification.
+- All 3 `border-t border-line pt-6` dividers removed:
+  - `feature === "saml-config"` mount block: dropped the wrapper `<div>` entirely — now `{feature === "saml-config" && <SamlConfigPage />}` (Todo 11, not this todo, owns adding the `mx-auto max-w-3xl` width-fix wrapper back in later — left it as a bare conditional for now, per scope).
+  - `feature === "saml-login-fix"` block (Try-it-out link + Live verification): `border-t border-line pt-6 space-y-4` → `space-y-4`.
+  - Root-cause/diff-summary/full-solution block: `border-t border-line pt-6 space-y-4` → `space-y-4`.
+- Grepped final file: `font-mono` present exactly once (in `SOLUTION_BLOCK_CLASSES`); zero remaining `border-t border-line` matches.
+- Every visible string `AttemptDetailPage.test.tsx` asserts on preserved verbatim — confirmed by full test-suite pass, unmodified test file.
+
+### Test verification (both sub-parts)
+
+`npx vitest run src/pages/AttemptDetailPage.test.tsx` → **12/12 passed** after both Todo 8 and Todo 9 edits (same 12/12 baseline as before any edits this session — zero regressions). Of these 12, **11 belong to this plan** (per the plan's own "corrected count from an earlier miscount" note); the 12th (`"renders root cause, diff summary, and the full solution when feature is windows-installer-idempotent-reinstall-fix"`, asserting on `TENQA-29`/`windows-installer-idempotent-reinstall-fix` fixture data) belongs to the concurrent, unrelated `tenqa-29-idempotent-install-fix` boulder session — untouched by either commit here, and it was already passing before my changes and still passes after (i.e. not made worse). `npx tsc --noEmit -p tsconfig.json` → exits 0 after both commits.
+
+Only `src/pages/AttemptDetailPage.tsx` staged/committed for both commits (2 separate commits as specified: `af1c20b` for Todo 8, `e28518d` for Todo 9). Did not touch `TryItOutPage.tsx` or `SamlConfigPage.tsx` (Todo 11's scope) or `DiffView.tsx` internals (only referenced its `className` prop, unchanged usage).
+
+## Todo 11 (2026-07-10) — TryItOutPage + SamlConfigPage: container, SectionHeader, card treatment; width contradiction + duplicate-title fixes
+
+Read the plan's Todo 11 section (lines 263-286) in full first, plus fresh reads of `TryItOutPage.tsx`, `SamlConfigPage.tsx`, and the CURRENT `AttemptDetailPage.tsx` (already rebuilt by Todos 8-9) to find the exact live `feature === "saml-config"` mount line.
+
+### `TryItOutPage.tsx`
+
+- Outer wrapper: `mx-auto max-w-2xl space-y-6 p-6` → `<PageContainer size="narrow" className="space-y-6">` (768px, up from 672px). Import added: `import { PageContainer } from "@/components/PageContainer"`.
+- `<h1>`: `text-lg font-semibold text-ink` → `text-2xl sm:text-3xl font-bold tracking-tight text-ink`.
+- `<h2>{guidance.label} — field values</h2>` → `<SectionHeader icon="sliders">{guidance.label} — field values</SectionHeader>`.
+- `"Launch login"` `<h2>` → `<SectionHeader icon="zap">Launch login</SectionHeader>` (same glyph as the sidebar's "Try it out" nav item).
+- All 3 card surfaces converted to `rounded-xl ... shadow-sm hover:shadow-md transition-shadow` (field-values panel, launch-login panel, AND the warning/"gotcha" panel — gap-review fix F5, previously missed by the "2 panels" framing). The gotcha panel's own `<h2>{guidance.gotcha.title}</h2>` intentionally stays a plain heading (NOT converted to `SectionHeader`) per the plan's explicit instruction — only its card wrapper's radius/shadow changed.
+- `SectionHeader` added to the existing `import { Badge, Button, Segmented } from "@/components/ui"` line.
+
+### `SamlConfigPage.tsx`
+
+- Outer wrapper: `mx-auto max-w-2xl space-y-6 p-6` → plain `<div className="space-y-6">`, with a one-line comment directly above it: `// no PageContainer here — always rendered nested inside AttemptDetailPage's own PageContainer` (comment is explicitly required by the plan's own acceptance criteria text — not an AI-slop addition).
+- **F2 fix (duplicate title):** `<h1 className="text-lg ...">Configure SSO</h1>` demoted to `<SectionHeader icon="building">Configure SSO</SectionHeader>` — NOT bumped to page-title scale, since this page never renders standalone (confirmed via `App.tsx`'s registered routes — no standalone `/saml-config` route exists) and would otherwise compete with `AttemptDetailPage`'s own `<h1>{doc.title}</h1>`.
+- Because `building` is now used for "Configure SSO", **"Service Provider values"** uses `<SectionHeader icon="sliders">` instead (same icon family as `TryItOutPage`'s field-values section, per the plan's explicit visual-consistency note).
+- `"Setup guidance"` → `<SectionHeader icon="info">`.
+- All 5 remaining `rounded-lg bg-card-2 ring-1 ring-line` panels (Metadata-URL tab, Upload-XML tab, Verified-result card, Service-Provider-values card, Setup-guidance card) → `rounded-xl ... shadow-sm hover:shadow-md transition-shadow`.
+
+### `AttemptDetailPage.tsx` — F1 fix (width contradiction), single-line mount wrapper ONLY
+
+Changed exactly one line (line 220 pre-edit):
+```diff
+-      {feature === "saml-config" && <SamlConfigPage />}
++      {feature === "saml-config" && (
++        <div className="mx-auto max-w-3xl">
++          <SamlConfigPage />
++        </div>
++      )}
+```
+No other line in this file touched — confirmed via reviewing the diff before committing. `AttemptDetailPage` still uses its own `PageContainer size="wide"` (1152px) at the top level; the nested `SamlConfigPage` now renders at 768px inside it, matching `TryItOutPage`'s width, per the plan's explicit rationale for both setup-flow pages.
+
+### New test: programmatic `max-w-3xl` assertion (per plan's explicit "do not rely on eyeballing" instruction)
+
+Added to `AttemptDetailPage.test.tsx`, a new case `"wraps the nested SamlConfigPage in a max-w-3xl container and renders exactly one page-title <h1>"`:
+- `screen.getByText("Configure SSO").closest(".max-w-3xl")` → not null, `toHaveClass("mx-auto", "max-w-3xl")` — confirms the F1 wrapper actually applied.
+- `document.querySelectorAll("h1.text-2xl.sm\\:text-3xl.font-bold")` → `toHaveLength(1)`, and that single `<h1>` contains `doc.title` ("Generic SAML/OIDC Config Page") — confirms F2: exactly one page-title-scale heading renders on the `saml-config` route (i.e. `SamlConfigPage`'s own heading did NOT get bumped to page-title scale).
+- Confirms `"Configure SSO"` resolves to an `<h2>` (via `.closest("h2")`), i.e. it's a `SectionHeader`, not a competing `<h1>`.
+
+### Test run
+
+`npx vitest run src/pages/TryItOutPage.test.tsx src/pages/SamlConfigPage.test.tsx src/pages/AttemptDetailPage.test.tsx` → **25/25 passed** (4 + 8 + 13, the 13th being the new max-w-3xl/single-h1 test added this todo; `AttemptDetailPage.test.tsx`'s pre-existing `screen.getByText("Configure SSO")` assertion, line 75, still passes unmodified — text preserved, only the element's tag/scale changed from `<h1 className="text-lg...">` to `<h2>` via `SectionHeader`). `npx tsc --noEmit -p tsconfig.json` → exits 0.
+
+Only `src/pages/TryItOutPage.tsx`, `src/pages/SamlConfigPage.tsx`, `src/pages/AttemptDetailPage.tsx` (single mount-line only), and `src/pages/AttemptDetailPage.test.tsx` (one new test added, zero existing tests modified) touched for this todo.
