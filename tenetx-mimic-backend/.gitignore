@@ -1,8 +1,8 @@
-node_modules
-dist
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
 .env
 .env.local
-*.pem
-*.log
 .captured/
-.logs/

@@ -111,7 +111,7 @@ def test_returns_none_for_non_string_input() -> None:
 # ---------------------------------------------------------------------------
 _HERE = Path(__file__).resolve().parent
 _HARNESS = _HERE / "_interop_node.mts"
-# _HERE = .../tenetx-mimic-backend-py/app/test ; parents[2] = .../tenetx-mimic
+# _HERE = .../tenetx-mimic-backend/app/test ; parents[2] = .../tenetx-mimic
 _NODE_BACKEND = _HERE.parents[2] / "tenetx-mimic-backend"
 
 

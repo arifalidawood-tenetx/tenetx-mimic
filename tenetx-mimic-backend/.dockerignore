@@ -1,7 +1,14 @@
-node_modules
+# Keep the build context lean and avoid baking dev/test artifacts into the image.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
 .env
-.env.local
-.git
+.env.*
+app/test/
+*.md
+.git/
 .gitignore
-dist
-test
+Dockerfile
+.dockerignore

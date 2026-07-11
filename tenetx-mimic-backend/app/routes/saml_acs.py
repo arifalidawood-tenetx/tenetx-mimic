@@ -76,7 +76,7 @@ from app.vendored.saml_provider import (
 
 router = APIRouter()
 
-# app/routes/saml_acs.py -> parent(routes)/parent(app)/parent == tenetx-mimic-backend-py/
+# app/routes/saml_acs.py -> parent(routes)/parent(app)/parent == tenetx-mimic-backend/
 _PACKAGE_ROOT = Path(__file__).resolve().parent.parent.parent
 
 # Synthetic IdP metadata defaults, copied VERBATIM from
