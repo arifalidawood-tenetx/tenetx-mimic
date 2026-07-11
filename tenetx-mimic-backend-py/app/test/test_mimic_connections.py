@@ -8,10 +8,15 @@ external deps when no live credentials are available):
     a single hoisted ``mockGet`` (mimicConnections.test.ts:12-22). We do the same:
     a per-test ``mock_get`` backs the whole ``collection().document().get()`` chain
     and each test sets its ``return_value`` / ``side_effect``.
-  * ``firebase_admin.firestore.client`` and ``app.mimic_connections.init_firebase_app``
-    are BOTH patched, so the suite is fully hermetic — no real Firebase Admin app,
-    no Firestore emulator, no credentials, no network. (No live emulator/creds are
-    available in this environment; ``FIREBASE_REFRESH_TOKEN`` is unset here.)
+  * The RAW ``google.cloud.firestore.Client`` constructor is patched (via
+    ``mimic_connections.firestore.Client``), so the suite is fully hermetic — no real
+    Firestore client, no emulator, no credentials, no network. This is the
+    construction path the fix uses; the old ``firebase_admin.firestore.client`` +
+    ``init_firebase_app`` wrapper is no longer imported or patched (it broke live with
+    this project's ``authorized_user`` refresh-token credential — a 300s retry storm /
+    ``restricted_client`` 503). A real ``Credentials`` object is still built (it does
+    no I/O at construction) and handed to the mocked ``Client``. (No live
+    emulator/creds available here; ``FIREBASE_REFRESH_TOKEN`` is unset in the env.)
   * The module memoizes ``_db_singleton``; it is reset to ``None`` per test so each
     test's patched client factory takes effect (== the Node ``mockGet.mockReset()``).
 """
@@ -54,17 +59,14 @@ def driver(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     monkeypatch.setenv("FIREBASE_REFRESH_TOKEN", "fake-refresh-token")
     # Reset the memoized client so this test's patched factory is used.
     monkeypatch.setattr(mimic_connections, "_db_singleton", None)
-    # init_firebase_app -> no-op Mock: proves we wire it WITHOUT creating a real
-    # default Firebase app (idempotent bootstrap owned by app/auth.py).
-    init_mock = Mock(return_value=object())
-    monkeypatch.setattr(mimic_connections, "init_firebase_app", init_mock)
     # One mock drives the whole chain (== the hoisted vitest mockGet).
     mock_get = Mock()
     fake_db = _make_fake_db(mock_get)
+    # Patch the RAW google.cloud.firestore.Client — the NEW path the fix uses, NOT the
+    # broken firebase_admin.firestore.client (mimicConnections.test.ts:14-22 analogue).
     client_factory = Mock(return_value=fake_db)
-    monkeypatch.setattr(mimic_connections.firestore, "client", client_factory)
+    monkeypatch.setattr(mimic_connections.firestore, "Client", client_factory)
     return SimpleNamespace(
-        init_mock=init_mock,
         client_factory=client_factory,
         mock_get=mock_get,
         fake_db=fake_db,
@@ -91,9 +93,8 @@ def test_returns_all_four_fields_verbatim_on_found_doc(driver: SimpleNamespace) 
         "slo_url": "https://idp.example/slo",
         "certificate": "-----BEGIN CERTIFICATE-----\nABC123\n-----END CERTIFICATE-----",
     }
-    # Wiring guard: the Firestore client is built off the shared default Firebase
-    # app via init_firebase_app() (MUST-DO of todo 7).
-    driver.init_mock.assert_called_once()
+    # Wiring guard: the raw google.cloud.firestore.Client is constructed exactly once
+    # (memoized singleton), never firebase_admin.firestore.client (the bug this fixes).
     driver.client_factory.assert_called_once()
 
 
@@ -159,11 +160,10 @@ def test_returns_none_without_throwing_when_token_unset(
     monkeypatch.delenv("FIREBASE_REFRESH_TOKEN", raising=False)
 
     assert mimic_connections.get_mimic_idp_connection("any-doc") is None
-    # Must short-circuit BEFORE ever building or touching Firestore — and before
-    # init_firebase_app (the token re-check is independent of the memoized client).
+    # Must short-circuit BEFORE ever building or touching Firestore (the token
+    # re-check is independent of the memoized client).
     driver.client_factory.assert_not_called()
     driver.mock_get.assert_not_called()
-    driver.init_mock.assert_not_called()
 
 
 def test_warn_paths_route_through_structured_logger(
