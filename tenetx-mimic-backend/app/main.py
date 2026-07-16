@@ -21,6 +21,8 @@ Run modes:
 from __future__ import annotations
 
 import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,12 +30,39 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.auth import init_firebase_app, register_auth
 from app.host_resolution import resolve_listen_host
 from app.logger import RequestIdLoggingMiddleware
+from app.mcp.lifespan import get_mcp_http_app
 from app.routes.saml_acs import router as saml_acs_router
 from app.routes.saml_login import router as saml_login_router
 from app.routes.saml_logout import router as saml_logout_router
 from app.routes.verify_metadata import router as verify_metadata_router
 
-app = FastAPI(title="tenetx-mimic-backend", version="1.0.0")
+# Build the MCP Streamable HTTP app BEFORE the FastAPI app so its lifespan can be
+# threaded into the parent lifespan below. mount() alone does NOT start the
+# StreamableHTTP session manager — without the parent running mcp_http_app.lifespan,
+# every /mcp call 500s "Task group is not initialized" while /health stays 200.
+mcp_http_app = get_mcp_http_app()
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Parent FastAPI lifespan that drives the MCP session manager.
+
+    This backend has no startup work of its own (``init_firebase_app()`` runs at
+    import time, below), so the sole job here is to run ``mcp_http_app.lifespan``
+    — the FastMCP-documented requirement that boots the StreamableHTTP session
+    manager. Skip it and the /mcp mount answers every request with
+    "Task group is not initialized".
+    """
+    async with mcp_http_app.lifespan(app):
+        yield
+
+
+app = FastAPI(title="tenetx-mimic-backend", version="1.0.0", lifespan=_lifespan)
+
+# Mount the FastMCP Streamable HTTP app at /mcp. get_mcp_http_app() built it with
+# path="/", so the public URL is exactly {base}/mcp — never /mcp/mcp. Mounted
+# before the routers below; SAML/verify-metadata/health routes are untouched.
+app.mount("/mcp", mcp_http_app)
 
 # CORS — allowlist only the deployed mimic Hosting origin (index.ts:33-40).
 allowed_origin = os.environ.get("ALLOWED_ORIGIN", "https://tenetx-mimic.web.app")
@@ -77,6 +106,13 @@ app.include_router(saml_acs_router)
 # like /saml/login and /saml/acs — they are never gated (index.ts:761/827 "NO
 # authMiddleware"). No Depends(require_tenetx_user).
 app.include_router(saml_logout_router)
+
+
+@app.get("/")
+def root() -> dict[str, str]:
+    """Root route (no auth) - basic service identification so ``GET /`` returns
+    200 instead of a bare 404 (no parity target: the Node backend never had one)."""
+    return {"service": app.title, "version": app.version, "status": "ok"}
 
 
 @app.get("/health")

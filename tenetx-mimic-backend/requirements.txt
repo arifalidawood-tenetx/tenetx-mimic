@@ -41,6 +41,15 @@ firebase-admin==7.5.0
 httpx>=0.27
 defusedxml>=0.7
 
+# --- FastMCP Streamable HTTP (working-mcp-pat todo 1) -----------------------
+# fastmcp provides FastMCP + mcp.http_app(transport="http") — the Streamable
+# HTTP ASGI app mounted at /mcp in app/main.py. Pinned >=2.13.1: that release
+# line carries the http_app(path=...) signature the mount relies on (path="/"
+# so the public URL is a single /mcp, never /mcp/mcp). Its lifespan MUST be
+# threaded into the parent FastAPI lifespan or the StreamableHTTP session
+# manager never starts ("Task group is not initialized" on every MCP call).
+fastmcp>=2.13.1
+
 # --- /saml/acs form parsing (todo 11: surfaced by the in-container pytest) ---
 # POST /saml/acs reads the Keycloak SAML HTTP-POST binding via
 # `await request.form()` (app/routes/saml_acs.py:352). The host verification venvs
