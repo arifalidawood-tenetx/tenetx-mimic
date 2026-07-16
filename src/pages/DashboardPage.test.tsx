@@ -2,13 +2,23 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { getDocs } from "firebase/firestore";
-import { DashboardPage, resolveChartClickTarget } from "./DashboardPage";
+import { DashboardPage } from "./DashboardPage";
+import * as mcpTokens from "@/lib/mcpTokens";
+import * as mcpHealth from "@/lib/mcpHealth";
 
 vi.mock("@/lib/firebaseClient", () => ({ auth: {}, db: {} }));
 
 vi.mock("firebase/firestore", () => ({
   collection: vi.fn(),
   getDocs: vi.fn(),
+}));
+
+vi.mock("@/lib/mcpTokens", () => ({
+  getMcpCounts: vi.fn(),
+}));
+
+vi.mock("@/lib/mcpHealth", () => ({
+  checkMcpHealth: vi.fn(),
 }));
 
 function mockDoc(id: string, data: Record<string, unknown>) {
@@ -25,10 +35,19 @@ function renderDashboard() {
 
 beforeEach(() => {
   vi.mocked(getDocs).mockReset();
+  vi.mocked(mcpTokens.getMcpCounts).mockReset();
+  vi.mocked(mcpHealth.checkMcpHealth).mockReset();
+  // Default: return real counts for most tests
+  vi.mocked(mcpTokens.getMcpCounts).mockResolvedValue({
+    tokenCount: 5,
+    toolCallCount: 12,
+  });
+  // Default: health probe reports unreachable (matches unconfigured VITE_SAML_PROXY_URL in tests)
+  vi.mocked(mcpHealth.checkMcpHealth).mockResolvedValue(false);
 });
 
 describe("DashboardPage", () => {
-  it("renders the total-count card and one card per doc for a populated fixture", async () => {
+  it("composes StatCard + McpStatusCard + FeatureRegistryList for a populated fixture", async () => {
     vi.mocked(getDocs).mockResolvedValue({
       docs: [
         mockDoc("doc1", {
@@ -61,11 +80,16 @@ describe("DashboardPage", () => {
 
     renderDashboard();
 
-    // total-count card
-    expect(await screen.findByText("3")).toBeInTheDocument();
-    expect(screen.getByText("features replicated")).toBeInTheDocument();
+    // StatCard: completion rate (1 of 3 done = 33.3%)
+    expect(await screen.findByText("33.3%")).toBeInTheDocument();
+    expect(screen.getByText("1 of 3 features done")).toBeInTheDocument();
 
-    // each doc's title/ticketId/status renders
+    // McpStatusCard: real counts from getMcpCounts (default: 5 tokens, 12 calls), not deployed
+    expect(screen.getByText("Not yet deployed")).toBeInTheDocument();
+    expect(screen.getByText("5 tokens issued")).toBeInTheDocument();
+    expect(screen.getByText("12 calls logged")).toBeInTheDocument();
+
+    // FeatureRegistryList: each doc's title/ticketId/status renders
     expect(screen.getByText("SAML SSO configuration")).toBeInTheDocument();
     expect(screen.getByText("TEN-135")).toBeInTheDocument();
     expect(screen.getByText("Done")).toBeInTheDocument();
@@ -95,66 +119,94 @@ describe("DashboardPage", () => {
 
     renderDashboard();
 
-    await waitFor(() => expect(screen.getByText("0")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("No data yet")).toBeInTheDocument());
+    expect(screen.getByText("0 of 0 features done")).toBeInTheDocument();
     expect(screen.getByText("No features tracked yet.")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
-});
 
-describe("resolveChartClickTarget", () => {
-  const doneFeature = {
-    id: "doc1",
-    ticketId: "TEN-135",
-    featureSlug: "saml-config",
-    attemptNumber: 1,
-    title: "SAML SSO configuration",
-    status: "done" as const,
-    routePath: "/mimic/TEN-135/saml-config/1",
-  };
-  const inProgressFeature = {
-    id: "doc2",
-    ticketId: "TEN-140",
-    featureSlug: "scim-sync",
-    attemptNumber: 1,
-    title: "SCIM group sync",
-    status: "in-progress" as const,
-    routePath: "/mimic/TEN-140/scim-sync/1",
-  };
-  const plannedFeature = {
-    id: "doc3",
-    ticketId: "TEN-144",
-    featureSlug: "audit-log",
-    attemptNumber: 2,
-    title: "Audit log export",
-    status: "planned" as const,
-    routePath: "/mimic/TEN-144/audit-log/2",
-  };
+  it("renders McpStatusCard with real counts from getMcpCounts on success", async () => {
+    vi.mocked(getDocs).mockResolvedValue({
+      docs: [
+        mockDoc("doc1", {
+          ticketId: "TEN-135",
+          featureSlug: "saml-config",
+          attemptNumber: 1,
+          title: "SAML SSO configuration",
+          status: "done",
+          routePath: "/mimic/TEN-135/saml-config/1",
+        }),
+      ],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+    vi.mocked(mcpTokens.getMcpCounts).mockResolvedValue({
+      tokenCount: 7,
+      toolCallCount: 23,
+    });
 
-  it("navigates 'Done' clicks to the first done feature's routePath", () => {
-    expect(
-      resolveChartClickTarget("Done", [plannedFeature, doneFeature, inProgressFeature])
-    ).toBe("/mimic/TEN-135/saml-config/1");
+    renderDashboard();
+
+    await waitFor(() => expect(screen.getByText("7 tokens issued")).toBeInTheDocument());
+    expect(screen.getByText("23 calls logged")).toBeInTheDocument();
+    expect(screen.getByText("Not yet deployed")).toBeInTheDocument();
   });
 
-  it("no-ops (returns null) for 'Done' when no done feature exists", () => {
-    expect(resolveChartClickTarget("Done", [plannedFeature, inProgressFeature])).toBeNull();
-  });
-
-  it("navigates 'Planned'/'In progress' to a matching feature's routePath when one exists", () => {
-    expect(resolveChartClickTarget("Planned", [plannedFeature])).toBe(
-      "/mimic/TEN-144/audit-log/2"
+  it("renders McpStatusCard with fallback 0/0 if getMcpCounts rejects, without crashing the page", async () => {
+    vi.mocked(getDocs).mockResolvedValue({
+      docs: [
+        mockDoc("doc1", {
+          ticketId: "TEN-135",
+          featureSlug: "saml-config",
+          attemptNumber: 1,
+          title: "SAML SSO configuration",
+          status: "done",
+          routePath: "/mimic/TEN-135/saml-config/1",
+        }),
+      ],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+    vi.mocked(mcpTokens.getMcpCounts).mockRejectedValue(
+      new Error("Firestore error")
     );
-    expect(resolveChartClickTarget("In progress", [inProgressFeature])).toBe(
-      "/mimic/TEN-140/scim-sync/1"
+
+    renderDashboard();
+
+    // Features still load and render despite getMcpCounts rejection
+    await waitFor(() =>
+      expect(screen.getByText("SAML SSO configuration")).toBeInTheDocument()
     );
+
+    // McpStatusCard falls back to 0/0 instead of crashing the page
+    expect(screen.getByText("0 tokens issued")).toBeInTheDocument();
+    expect(screen.getByText("0 calls logged")).toBeInTheDocument();
+    expect(screen.getByText("Not yet deployed")).toBeInTheDocument();
+
+    // No error alert for the MCP failure (it's silently handled)
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("falls back to /mimic/try-it-out for 'Planned'/'In progress' with no matching feature", () => {
-    expect(resolveChartClickTarget("Planned", [doneFeature])).toBe("/mimic/try-it-out");
-    expect(resolveChartClickTarget("In progress", [doneFeature])).toBe("/mimic/try-it-out");
+  it("renders McpStatusCard as 'Deployed' when checkMcpHealth resolves true", async () => {
+    vi.mocked(getDocs).mockResolvedValue({
+      docs: [],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+    vi.mocked(mcpHealth.checkMcpHealth).mockResolvedValue(true);
+
+    renderDashboard();
+
+    expect(await screen.findByText("Deployed")).toBeInTheDocument();
+    expect(screen.queryByText("Not yet deployed")).not.toBeInTheDocument();
   });
 
-  it("returns null for an unrecognized status label", () => {
-    expect(resolveChartClickTarget("Unknown", [doneFeature])).toBeNull();
+  it("renders McpStatusCard as 'Not yet deployed' when checkMcpHealth resolves false", async () => {
+    vi.mocked(getDocs).mockResolvedValue({
+      docs: [],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+    vi.mocked(mcpHealth.checkMcpHealth).mockResolvedValue(false);
+
+    renderDashboard();
+
+    expect(await screen.findByText("Not yet deployed")).toBeInTheDocument();
   });
 });

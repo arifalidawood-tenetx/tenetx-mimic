@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, within } from "@testing-library/react";
 import App from "./App";
 
 // AuthGate + its underlying AuthProvider pull in real firebase/auth wiring;
@@ -29,7 +29,12 @@ describe("App routing", () => {
 
     render(<App />);
 
-    expect(screen.getByRole("heading", { name: "Try it out" })).toBeInTheDocument();
+    // Scoped to <main> (the routed page content) since AppShell's Topbar
+    // also renders an <h1> for this route's ROUTE_TITLES entry ("Try it
+    // out"), which would otherwise collide with TryItOutPage's own <h1> of
+    // the same name.
+    const main = screen.getByRole("main");
+    expect(within(main).getByRole("heading", { name: "Try it out" })).toBeInTheDocument();
   });
 
   it("resolves /mimic/:ticket/try-it-out to TryItOutPage", () => {
