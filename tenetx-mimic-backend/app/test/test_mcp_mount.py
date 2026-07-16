@@ -38,6 +38,10 @@ def test_health_still_200_with_lifespan_active() -> None:
 
 
 def test_mcp_probe_does_not_500_on_dead_session_manager() -> None:
+    """Lifespan/session-manager smoke: missing Bearer yields 401 (auth gate),
+    never a dead-session-manager 500. Auth-gate success paths live in
+    ``test_mcp_auth_gate.py``.
+    """
     initialize = {
         "jsonrpc": "2.0",
         "id": 1,
@@ -54,5 +58,8 @@ def test_mcp_probe_does_not_500_on_dead_session_manager() -> None:
             json=initialize,
             headers={"Accept": "application/json, text/event-stream"},
         )
+    # 401 is expected without Authorization once the PAT verifier is wired.
+    # A missing lifespan would 500 with "Task group is not initialized" instead.
     assert response.status_code != 500
     assert "Task group is not initialized" not in response.text
+    assert response.status_code == 401
