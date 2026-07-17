@@ -25,9 +25,12 @@ Security posture (the single most important property in this module):
 Firestore is the RAW synchronous ``google.cloud.firestore.Client`` from
 :func:`app.mcp.firestore_client.get_mcp_firestore` (``None`` when
 ``FIREBASE_REFRESH_TOKEN`` is unset — which fail-closes here). The blocking query
-runs inside the async ``verify_token`` because the lookup is a single, fast
-indexed read; it is not offloaded to a thread to keep the fail-closed path
-simple and dependency-free.
+runs via ``asyncio.to_thread`` under a hard timeout (``_QUERY_TIMEOUT_SECONDS``):
+a stale/expired credential (e.g. an expired ``FIREBASE_REFRESH_TOKEN``) can make
+the underlying grpc auth retry for a long time, and running that inline on the
+event loop previously froze the ENTIRE server — every route, not just
+``/mcp`` — until it gave up. The timeout bounds that to one fail-closed
+request instead of a full outage.
 
 Scopes are recorded in ``claims`` but NOT enforced in v1 (documented plan
 limitation): the returned ``AccessToken`` carries ``scopes=[]`` so FastMCP's
@@ -36,11 +39,13 @@ scope gate never rejects, while the token's real scope list is surfaced under
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
 from fastmcp.server.auth import AccessToken, TokenVerifier
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 from app.logger import log_event, logger
 from app.mcp.firestore_client import get_mcp_firestore
@@ -48,6 +53,10 @@ from app.mcp.firestore_client import get_mcp_firestore
 __all__ = ["McpAccessTokenVerifier"]
 
 _MCP_TOKENS_COLLECTION = "mcp_tokens"
+
+# Bounds the blocking Firestore query (see module docstring): a stale/expired
+# credential can otherwise hang far longer than any caller would wait.
+_QUERY_TIMEOUT_SECONDS = 3.0
 
 
 class McpAccessTokenVerifier(TokenVerifier):
@@ -107,10 +116,13 @@ class McpAccessTokenVerifier(TokenVerifier):
 
             query = (
                 db.collection(_MCP_TOKENS_COLLECTION)
-                .where("tokenHash", "==", token_hash)
+                .where(filter=FieldFilter("tokenHash", "==", token_hash))
                 .limit(1)
             )
-            docs = list(query.stream())
+            docs = await asyncio.wait_for(
+                asyncio.to_thread(lambda: list(query.stream())),
+                timeout=_QUERY_TIMEOUT_SECONDS,
+            )
             if not docs:
                 return None
 
