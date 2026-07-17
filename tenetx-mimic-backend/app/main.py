@@ -28,8 +28,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.auth import init_firebase_app, register_auth
+from app.gcp_credentials import get_google_credentials
 from app.host_resolution import resolve_listen_host
 from app.logger import RequestIdLoggingMiddleware
+from app.mcp.firestore_client import get_mcp_firestore
 from app.mcp.lifespan import get_mcp_http_app
 from app.routes.saml_acs import router as saml_acs_router
 from app.routes.saml_login import router as saml_login_router
@@ -62,6 +64,14 @@ app = FastAPI(title="tenetx-mimic-backend", version="1.0.0", lifespan=_lifespan)
 # Mount the FastMCP Streamable HTTP app at /mcp. get_mcp_http_app() built it with
 # path="/", so the public URL is exactly {base}/mcp — never /mcp/mcp. Mounted
 # before the routers below; SAML/verify-metadata/health routes are untouched.
+#
+# Starlette's Mount only matches "<prefix>/<rest>" internally, so a bare
+# POST {base}/mcp (no trailing slash) always 307s to {base}/mcp/ first —
+# this is unrelated to the /mcp/mcp bug documented above, and disabling
+# redirect_slashes to "fix" it breaks the mount entirely (307 -> 404,
+# confirmed empirically). 307/308 preserve method+body per HTTP spec, so
+# every compliant client here (httpx, undici/fetch, Python requests)
+# follows it transparently with the body intact.
 app.mount("/mcp", mcp_http_app)
 
 # CORS — allowlist only the deployed mimic Hosting origin (index.ts:33-40).
@@ -119,6 +129,31 @@ def root() -> dict[str, str]:
 def health() -> dict[str, str]:
     """Health check (no auth), parity with index.ts:137-139: 200 ``{"status": "ok"}``."""
     return {"status": "ok"}
+
+
+@app.get("/ready")
+def ready() -> dict[str, bool | str]:
+    """Readiness check (no auth) — always 200, diagnostic of credential configuration.
+
+    Returns:
+        - ``status``: "ok" if Firestore configured, "degraded" if not
+        - ``firestoreConfigured``: True if Firestore client is available (WIF/Keycloak configured)
+        - ``credentialMode``: "wif" if using Workload Identity Federation (optional, cheap check)
+
+    Construction-only check — no live Firestore query. Coolify liveness stays on /health.
+    """
+    firestore_available = get_mcp_firestore() is not None
+    creds = get_google_credentials()
+    credential_mode = "wif" if creds is not None else None
+
+    result: dict[str, bool | str] = {
+        "status": "ok" if firestore_available else "degraded",
+        "firestoreConfigured": firestore_available,
+    }
+    if credential_mode is not None:
+        result["credentialMode"] = credential_mode
+
+    return result
 
 
 def main() -> None:
