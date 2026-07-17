@@ -145,8 +145,8 @@ def _auth_headers(token: str | None = _PLAINTEXT, extra: Optional[dict[str, str]
     return headers
 
 
-def test_bare_mcp_post_without_follow_returns_307() -> None:
-    """POST /mcp (no trailing slash) without follow_redirects returns 307."""
+def test_bare_mcp_post_without_follow_does_not_redirect() -> None:
+    """POST /mcp (no trailing slash) without follow_redirects does NOT redirect; hits auth gate directly."""
     with TestClient(app) as client:
         response = client.post(
             "/mcp",
@@ -154,9 +154,12 @@ def test_bare_mcp_post_without_follow_returns_307() -> None:
             headers=_auth_headers(token=None),
             follow_redirects=False,
         )
-    assert response.status_code == 307
+    # Middleware rewrites /mcp → /mcp/ in-process, so no 307 redirect.
+    # Auth gate rejects missing token with 401.
+    assert response.status_code == 401, f"Expected 401, got {response.status_code}"
+    # No Location header (no redirect).
     location = response.headers.get("location", "")
-    assert location.endswith("/mcp/"), f"Expected location to end with /mcp/, got {location}"
+    assert not location, f"Expected no Location header, got {location}"
 
 
 def test_bare_mcp_post_with_follow_reaches_auth_gate_401() -> None:
