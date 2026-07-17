@@ -207,30 +207,38 @@ def main(argv: "list[str] | None" = None) -> int:
 
     # Load .env.local (Keycloak + GCP WIF env) with non-clobber: process env wins.
     # Keycloak: KEYCLOAK_TOKEN_URL, KEYCLOAK_ISSUER, KEYCLOAK_CLIENT_ID, KEYCLOAK_CLIENT_SECRET
-    # GCP WIF: GCP_WIF_*, GCP_PROJECT_ID, GOOGLE_APPLICATION_CREDENTIALS
+    # GCP WIF: GCP_WIF_AUDIENCE, GCP_WIF_STS_TOKEN_URL, GCP_WIF_SERVICE_ACCOUNT_IMPERSONATION_URL,
+    #          GCP_WIF_SUBJECT_TOKEN_TYPE, GCP_WIF_CREDENTIAL_CONFIG, GOOGLE_APPLICATION_CREDENTIALS
+    # Project: GCP_PROJECT_ID, FIREBASE_PROJECT_ID (optional)
     # Never log secret values.
     env_file_path = REPO_ROOT / ".env.local"
     env_file_vars = {}
     if env_file_path.exists():
         env_file_vars = parse_env_file(env_file_path)
     
-    # Non-clobber: process env takes precedence over .env.local
-    keycloak_gcp_vars = {
+    # Non-clobber: only inject from .env.local if process env is unset.
+    keys_to_inject = {
         "KEYCLOAK_TOKEN_URL",
         "KEYCLOAK_ISSUER",
         "KEYCLOAK_CLIENT_ID",
         "KEYCLOAK_CLIENT_SECRET",
+        "GCP_WIF_AUDIENCE",
+        "GCP_WIF_STS_TOKEN_URL",
+        "GCP_WIF_SERVICE_ACCOUNT_IMPERSONATION_URL",
+        "GCP_WIF_SUBJECT_TOKEN_TYPE",
         "GCP_WIF_CREDENTIAL_CONFIG",
-        "GCP_WIF_PROVIDER_RESOURCE_NAME",
-        "GCP_WIF_SERVICE_ACCOUNT_EMAIL",
-        "GCP_PROJECT_ID",
         "GOOGLE_APPLICATION_CREDENTIALS",
+        "GCP_PROJECT_ID",
+        "FIREBASE_PROJECT_ID",
+        "MIMIC_STATUS_SECRET",
     }
     
-    merged_env = {**env_file_vars}
-    for var in keycloak_gcp_vars:
-        if var in os.environ:
-            merged_env[var] = os.environ[var]
+    merged_env = {}
+    for key in keys_to_inject:
+        if key in os.environ and os.environ[key]:
+            merged_env[key] = os.environ[key]
+        elif key in env_file_vars:
+            merged_env[key] = env_file_vars[key]
     
     # app/main.py's CORSMiddleware allowlists ONLY os.environ["ALLOWED_ORIGIN"] (default: the
     # deployed prod Hosting origin) - override it to the frontend's own local origin so the
@@ -248,7 +256,7 @@ def main(argv: "list[str] | None" = None) -> int:
         **os.environ,
         **merged_env,
         "ALLOWED_ORIGIN": f"http://localhost:{args.frontend_port}",
-        "MIMIC_STATUS_SECRET": os.environ.get("MIMIC_STATUS_SECRET") or merged_env.get("MIMIC_STATUS_SECRET") or "tenetx-mimic-dev-runner-secret",
+        "MIMIC_STATUS_SECRET": merged_env.get("MIMIC_STATUS_SECRET") or "tenetx-mimic-dev-runner-secret",
     }
 
     try:
