@@ -63,10 +63,10 @@ FWD_HEADERS = {"X-Forwarded-Host": "saml-proxy.example.com", "X-Forwarded-Proto"
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
-    """Pin a deterministic allowlist + no Firestore token, so the open-redirect guard
-    uses the default origin and any un-mocked override lookup degrades fast to None."""
+    """Pin a deterministic allowlist so the open-redirect guard uses the default
+    origin. (Firestore/WIF credentials are now mocked at the get_google_credentials
+    boundary by the tests that need them, not via env — no env var to clean here.)"""
     monkeypatch.delenv("ALLOWED_ORIGIN", raising=False)
-    monkeypatch.delenv("FIREBASE_REFRESH_TOKEN", raising=False)
 
 
 def _logout_params(**overrides: str) -> dict[str, str]:

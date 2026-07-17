@@ -20,21 +20,21 @@ pytest>=8.0
 python3-saml==1.16.0
 xmlsec==1.3.17
 
-# --- Firebase Admin (todo 5: auth dependency + app init) --------------------
-# firebase-admin provides the refresh-token ("authorized_user") credential flow
-# (credentials.RefreshToken) and getAuth().verifyIdToken equivalent
+# --- Firebase Admin (auth dependency + app init) -----------------------------
+# firebase-admin provides getAuth().verifyIdToken equivalent
 # (firebase_admin.auth.verify_id_token) that app/auth.py ports from
-# tenetx-mimic-backend/src/index.ts:42-134. Its google-cloud-firestore transitive
-# dep is ALSO the client todo 7 (Firestore mimic_idp_connections lookup) will use,
-# so both todos share this single pin. Pinned to the version resolved at install
-# time in the reference venv.
+# tenetx-mimic-backend/src/index.ts:42-134. The app is initialized with a keyless
+# WIF credential (app/gcp_credentials.py + app/auth.py's _WifAdminCredential
+# adapter) — NOT the refresh-token ("authorized_user") credential flow; that path
+# was retired in favor of Keycloak OIDC + GCP Workload Identity Federation.
 firebase-admin==7.5.0
 
-# --- Keycloak OIDC + GCP Workload Identity Federation (local-mcp-agents todo 1) ---
+# --- Keycloak OIDC + GCP Workload Identity Federation ------------------------
 # app/gcp_credentials.py imports google.auth.identity_pool.Credentials +
-# SubjectTokenSupplier directly (keyless WIF replacing FIREBASE_REFRESH_TOKEN), so
-# google-auth is pinned explicitly rather than relied on transitively via
-# firebase-admin. Floor is the release line carrying the subject_token_supplier API.
+# SubjectTokenSupplier directly for the keyless WIF exchange (Keycloak
+# client_credentials JWT -> Google STS -> SA impersonation), so google-auth is
+# pinned explicitly rather than relied on transitively via firebase-admin. Floor
+# is the release line carrying the subject_token_supplier API.
 google-auth>=2.55
 
 # --- /verify-metadata route (todo 4) ----------------------------------------
