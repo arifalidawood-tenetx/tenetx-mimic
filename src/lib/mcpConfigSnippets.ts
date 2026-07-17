@@ -27,6 +27,8 @@ export const MCP_ENV_VAR_NAME = 'TENETX_MIMIC_MCP_TOKEN';
  * Confirmed Streamable HTTP endpoint path (Task 6 of working-mcp-pat):
  * the app mounts the MCP app at `/mcp`, and fastmcp's Streamable HTTP
  * transport serves at `/` under that mount, giving `/mcp`.
+ * Backend path-normalization middleware rewrites bare `/mcp` → `/mcp/`
+ * in-process without client-side redirect, so this public URL stays pretty.
  */
 export const MCP_ENDPOINT_PATH = '/mcp';
 
