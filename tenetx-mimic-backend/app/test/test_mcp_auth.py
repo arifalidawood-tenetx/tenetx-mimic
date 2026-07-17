@@ -67,6 +67,7 @@ class _FakeCollection:
         self._snaps = snaps
 
     def where(self, *_args: Any, **_kwargs: Any) -> _FakeQuery:
+        # Accept both positional args and filter= kwarg (FieldFilter).
         return _FakeQuery(self._snaps)
 
 
@@ -154,7 +155,7 @@ def test_firestore_exception_returns_none_never_raises() -> None:
 
 def test_none_firestore_client_fails_closed() -> None:
     verifier = McpAccessTokenVerifier(db=None, now_fn=lambda: _NOW)
-    # get_mcp_firestore returns None when FIREBASE_REFRESH_TOKEN unset -> deny.
+    # get_mcp_firestore returns None when Keycloak/WIF unconfigured -> deny.
     import app.mcp.auth as auth_module
 
     original = auth_module.get_mcp_firestore

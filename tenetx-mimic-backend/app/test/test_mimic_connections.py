@@ -8,15 +8,13 @@ external deps when no live credentials are available):
     a single hoisted ``mockGet`` (mimicConnections.test.ts:12-22). We do the same:
     a per-test ``mock_get`` backs the whole ``collection().document().get()`` chain
     and each test sets its ``return_value`` / ``side_effect``.
-  * The RAW ``google.cloud.firestore.Client`` constructor is patched (via
-    ``mimic_connections.firestore.Client``), so the suite is fully hermetic — no real
-    Firestore client, no emulator, no credentials, no network. This is the
-    construction path the fix uses; the old ``firebase_admin.firestore.client`` +
-    ``init_firebase_app`` wrapper is no longer imported or patched (it broke live with
-    this project's ``authorized_user`` refresh-token credential — a 300s retry storm /
-    ``restricted_client`` 503). A real ``Credentials`` object is still built (it does
-    no I/O at construction) and handed to the mocked ``Client``. (No live
-    emulator/creds available here; ``FIREBASE_REFRESH_TOKEN`` is unset in the env.)
+  * The keyless credential factory (``mimic_connections.get_google_credentials``) and
+    the RAW ``google.cloud.firestore.Client`` constructor (``mimic_connections.firestore.Client``)
+    are patched, so the suite is fully hermetic — no Keycloak, no GCP STS, no real
+    Firestore client, no emulator, no network. This is the construction path the fix
+    uses; the old ``firebase_admin.firestore.client`` + ``init_firebase_app`` wrapper
+    is no longer imported or patched. A fake credential stand-in is handed to the
+    mocked ``Client``.
   * The module memoizes ``_db_singleton``; it is reset to ``None`` per test so each
     test's patched client factory takes effect (== the Node ``mockGet.mockReset()``).
 """
@@ -54,9 +52,12 @@ def _make_fake_db(mock_get: Mock) -> SimpleNamespace:
 
 @pytest.fixture
 def driver(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
-    # Token present by default == vitest beforeEach setting a fake token
-    # (mimicConnections.test.ts:35).
-    monkeypatch.setenv("FIREBASE_REFRESH_TOKEN", "fake-refresh-token")
+    # Credentials configured by default == vitest beforeEach setting a fake token
+    # (mimicConnections.test.ts:35). Individual tests force None to exercise the
+    # unconfigured (fail-closed) path.
+    fake_creds = SimpleNamespace(name="fake-wif-credentials")
+    creds_factory = Mock(return_value=fake_creds)
+    monkeypatch.setattr(mimic_connections, "get_google_credentials", creds_factory)
     # Reset the memoized client so this test's patched factory is used.
     monkeypatch.setattr(mimic_connections, "_db_singleton", None)
     # One mock drives the whole chain (== the hoisted vitest mockGet).
@@ -67,6 +68,8 @@ def driver(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     client_factory = Mock(return_value=fake_db)
     monkeypatch.setattr(mimic_connections.firestore, "Client", client_factory)
     return SimpleNamespace(
+        creds_factory=creds_factory,
+        fake_creds=fake_creds,
         client_factory=client_factory,
         mock_get=mock_get,
         fake_db=fake_db,
@@ -152,15 +155,15 @@ def test_coerces_missing_or_wrong_typed_fields_to_empty_strings(
     }
 
 
-def test_returns_none_without_throwing_when_token_unset(
-    driver: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+def test_returns_none_without_throwing_when_credentials_unconfigured(
+    driver: SimpleNamespace,
 ) -> None:
-    """FIREBASE_REFRESH_TOKEN unset -> None, short-circuits before Firestore —
+    """Factory returns None -> None, short-circuits before Firestore —
     mimicConnections.test.ts:128-137."""
-    monkeypatch.delenv("FIREBASE_REFRESH_TOKEN", raising=False)
+    driver.creds_factory.return_value = None
 
     assert mimic_connections.get_mimic_idp_connection("any-doc") is None
-    # Must short-circuit BEFORE ever building or touching Firestore (the token
+    # Must short-circuit BEFORE ever building or touching Firestore (the credential
     # re-check is independent of the memoized client).
     driver.client_factory.assert_not_called()
     driver.mock_get.assert_not_called()

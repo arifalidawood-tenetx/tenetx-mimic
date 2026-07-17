@@ -5,11 +5,12 @@ The Node original does two things in one file; this module splits them into two
 independently-consumable pieces so the two downstream todos can each take only
 the half they need:
 
-  (a) :func:`init_firebase_app` — Firebase Admin SDK bootstrap with a
-      refresh-token ("authorized_user") credential (index.ts:57-84). Runs once at
-      startup. Idempotent, so it is a shared prerequisite for BOTH the auth
-      dependency below AND todo 7's Firestore client (which imports and calls it
-      to construct a ``google-cloud-firestore`` client off the same default app).
+  (a) :func:`init_firebase_app` — Firebase Admin SDK bootstrap with keyless
+      Keycloak-OIDC + GCP Workload Identity Federation credentials (via
+      :func:`app.gcp_credentials.get_google_credentials`). Runs once at startup.
+      Idempotent, so it is a shared prerequisite for BOTH the auth dependency below
+      AND todo 7's Firestore client (which imports and calls it to construct a
+      ``google-cloud-firestore`` client off the same default app).
 
   (b) :func:`require_tenetx_user` — the FastAPI dependency equivalent of
       ``authMiddleware`` (index.ts:95-134). Applied ONLY to ``/verify-metadata``
@@ -18,15 +19,15 @@ the half they need:
       ID token, so index.ts:557/704/761/827 mount them with "NO authMiddleware" by
       design. Those routes only need init (a) for Firestore access, not this gate.
 
-WHY a refresh-token credential (not a service-account key): creating
+WHY keyless WIF (not a service-account key, not a refresh token): creating
 service-account keys on this GCP project is blocked by the org policy
-``constraints/iam.disableServiceAccountKeyCreation`` (confirmed), so a cert
-credential can never be populated. We reuse the same ``firebase login:ci``
-refresh token used for this project's Firebase CLI deploys (Coolify env
-``FIREBASE_REFRESH_TOKEN``); ``auth.verify_id_token`` works with it. The
-client_id/client_secret below are firebase-tools' OWN PUBLIC OAuth client
-credentials, embedded verbatim in the open-source firebase-tools ``lib/api.js`` —
-documented-in-source PUBLIC values, NOT secrets (index.ts:54-59).
+``constraints/iam.disableServiceAccountKeyCreation`` (confirmed), and long-lived
+refresh tokens are likewise disallowed. Instead we federate the existing Keycloak
+OIDC provider into GCP: Keycloak ``client_credentials`` → Google STS exchange →
+short-lived impersonated credentials. That single credential — produced by
+:func:`app.gcp_credentials.get_google_credentials` and adapted to firebase-admin
+via :class:`_WifAdminCredential` — backs both ``auth.verify_id_token`` here and the
+raw Firestore clients. No key file or refresh token is ever read or stored.
 
 Error-shape parity: FastAPI's default ``HTTPException`` renders ``{"detail": ...}``.
 The Node backend returns ``{"error": ...}``. To keep the wire contract identical,
@@ -37,10 +38,9 @@ serializes as compact JSON (``separators=(",", ":")``) exactly like Express
 """
 from __future__ import annotations
 
-import os
 import sys
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 import firebase_admin
 from fastapi import FastAPI, Request
@@ -48,11 +48,10 @@ from fastapi.responses import JSONResponse
 from firebase_admin import auth as firebase_auth
 from firebase_admin import credentials
 
+from app.gcp_credentials import get_google_credentials
 from app.logger import log_event, logger
 
 __all__ = [
-    "FIREBASE_TOOLS_CLIENT_ID",
-    "FIREBASE_TOOLS_CLIENT_SECRET",
     "FIREBASE_PROJECT_ID",
     "ALLOWED_EMAIL_DOMAIN",
     "AuthenticatedUser",
@@ -63,16 +62,8 @@ __all__ = [
     "register_auth",
 ]
 
-# firebase-tools' OWN PUBLIC OAuth client credentials (index.ts:57-59). Embedded
-# verbatim in open-source firebase-tools `lib/api.js` — public values, NOT secrets.
-FIREBASE_TOOLS_CLIENT_ID = (
-    "563584335869-fgrhgmd47bqnekij5i8b5pr03ho849e6.apps.googleusercontent.com"
-)
-FIREBASE_TOOLS_CLIENT_SECRET = "j9iVZfS8kkCEFUPaAeJV0sAi"
-
-# verify_id_token() needs to know which project's tokens to accept. A refresh-token
-# credential (unlike a cert credential) has no project baked in, so it is set
-# explicitly here (index.ts:78).
+# verify_id_token() needs to know which project's tokens to accept. The federated
+# WIF credential has no project baked in, so it is set explicitly here (index.ts:78).
 FIREBASE_PROJECT_ID = "tenetx-qa-scores"
 
 # Email allowlist gate (index.ts:116). Not env-configurable — the Node backend
@@ -103,18 +94,42 @@ class AuthError(Exception):
         super().__init__(payload.get("error", "authentication error"))
 
 
+class _WifAdminCredential(credentials.Base):
+    """Adapt a ``google.auth`` Credentials (keyless Keycloak-OIDC + GCP WIF, from
+    :func:`app.gcp_credentials.get_google_credentials`) to the firebase-admin
+    ``credentials.Base`` interface.
+
+    firebase-admin drives auth through ``get_credential()`` (returning a
+    ``google.auth.credentials.Credentials``) and the inherited ``get_access_token()``
+    (which refreshes it) — exactly what the underlying identity_pool credential
+    provides. No key file, no refresh token; the token is minted lazily on first use.
+    """
+
+    def __init__(self, google_credentials: Any) -> None:
+        self._google_credentials = google_credentials
+
+    def get_credential(self) -> Any:
+        return self._google_credentials
+
+
 def init_firebase_app() -> Optional[firebase_admin.App]:
-    """Initialize (once) the default Firebase Admin app. Port of index.ts:57-84.
+    """Initialize (once) the default Firebase Admin app with keyless WIF credentials.
 
     Idempotent: returns the already-initialized default app if present, so it is
     safe for both this module's startup wiring AND todo 7's Firestore client to
-    call. Returns ``None`` when ``FIREBASE_REFRESH_TOKEN`` is unset — mirroring the
-    Node warn-and-continue branch (index.ts:62-65), after which token verification
-    has no app and every request is rejected with the invalid-token 401.
+    call.
 
-    A refresh-token credential does NO network I/O at construction; the token is
-    exchanged lazily on first API use. The value is passed straight into the
-    credential and is never logged.
+    Fail modes (parity with the prior refresh-token posture):
+      * Keycloak/WIF credentials unconfigured (:func:`get_google_credentials`
+        returns ``None``) → ``warn`` and ``return None`` (no exit); token
+        verification then has no app and every request is rejected with the
+        invalid-token 401.
+      * A hard exception during ``initialize_app`` AFTER credentials resolved → a
+        boot-time misconfiguration that is unrecoverable, so ``sys.exit(1)`` rather
+        than serve every request as a 401 (index.ts:81-82 parity).
+
+    The WIF credential does NO network I/O at construction; the Keycloak/STS
+    exchange happens lazily on first API use. No secret or token is ever logged.
     """
     # Idempotency: firebase_admin.get_app() raises ValueError when the default app
     # does not yet exist; any other state means it is already initialized.
@@ -123,30 +138,23 @@ def init_firebase_app() -> Optional[firebase_admin.App]:
     except ValueError:
         pass
 
-    firebase_refresh_token = os.environ.get("FIREBASE_REFRESH_TOKEN")
-    if not firebase_refresh_token:
+    google_credentials = get_google_credentials()
+    if google_credentials is None:
         log_event(
             logger,
             "warn",
-            "FIREBASE_REFRESH_TOKEN not set. Auth middleware will reject all requests.",
+            "WIF/Keycloak credentials not configured. Auth middleware will reject all requests.",
         )
         return None
 
     try:
-        credential = credentials.RefreshToken(
-            {
-                "type": "authorized_user",
-                "client_id": FIREBASE_TOOLS_CLIENT_ID,
-                "client_secret": FIREBASE_TOOLS_CLIENT_SECRET,
-                "refresh_token": firebase_refresh_token,
-            }
-        )
+        credential = _WifAdminCredential(google_credentials)
         return firebase_admin.initialize_app(
             credential, {"projectId": FIREBASE_PROJECT_ID}
         )
     except Exception as error:  # noqa: BLE001 — parity with index.ts:80's catch-all
-        # index.ts:81-82 logs then process.exit(1): a boot-time misconfiguration is
-        # unrecoverable, so fail fast rather than serve every request as a 401.
+        # A boot-time misconfiguration is unrecoverable, so fail fast rather than
+        # serve every request as a 401.
         log_event(
             logger, "error", "Failed to initialize Firebase Admin SDK", {"err": str(error)}
         )

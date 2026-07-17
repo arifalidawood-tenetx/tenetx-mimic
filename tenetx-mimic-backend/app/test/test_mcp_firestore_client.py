@@ -1,12 +1,11 @@
 """Tests for app/mcp/firestore_client.py.
 
-Mocking strategy mirrors app/test/test_mimic_connections.py: the RAW
-``google.cloud.firestore.Client`` constructor is patched (via
-``firestore_client.firestore.Client``) so the suite is fully hermetic — no real
-Firestore client, no emulator, no credentials, no network. A real ``Credentials``
-object is still built (it does no I/O at construction) and handed to the mocked
-``Client``. The MCP-owned ``_mcp_db_singleton`` is reset to ``None`` per test so
-each test's patched factory takes effect.
+Mocking strategy mirrors app/test/test_mimic_connections.py: the keyless credential
+factory (``firestore_client.get_google_credentials``) and the RAW
+``google.cloud.firestore.Client`` constructor (``firestore_client.firestore.Client``)
+are patched, so the suite is fully hermetic — no Keycloak, no GCP STS, no real
+Firestore client, no network. The MCP-owned ``_mcp_db_singleton`` is reset to
+``None`` per test so each test's patched factory takes effect.
 """
 from __future__ import annotations
 
@@ -20,51 +19,47 @@ from app.mcp import firestore_client
 
 @pytest.fixture
 def driver(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
-    # Token present by default; individual tests delete it to exercise the None path.
-    monkeypatch.setenv("FIREBASE_REFRESH_TOKEN", "fake-refresh-token")
+    # Credentials configured by default; individual tests force None to exercise
+    # the unconfigured (fail-closed) path.
+    fake_creds = SimpleNamespace(name="fake-wif-credentials")
+    creds_factory = Mock(return_value=fake_creds)
+    monkeypatch.setattr(firestore_client, "get_google_credentials", creds_factory)
     # Reset the MCP-owned memoized client so this test's patched factory is used.
     monkeypatch.setattr(firestore_client, "_mcp_db_singleton", None)
     fake_db = SimpleNamespace(name="fake-mcp-db")
     client_factory = Mock(return_value=fake_db)
     monkeypatch.setattr(firestore_client.firestore, "Client", client_factory)
-    return SimpleNamespace(client_factory=client_factory, fake_db=fake_db)
+    return SimpleNamespace(
+        creds_factory=creds_factory,
+        fake_creds=fake_creds,
+        client_factory=client_factory,
+        fake_db=fake_db,
+    )
 
 
-def test_returns_none_without_throwing_when_token_unset(
-    driver: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+def test_returns_none_without_throwing_when_credentials_unconfigured(
+    driver: SimpleNamespace,
 ) -> None:
-    """FIREBASE_REFRESH_TOKEN unset -> None, short-circuits before construction."""
-    monkeypatch.delenv("FIREBASE_REFRESH_TOKEN", raising=False)
+    """Factory returns None -> None, short-circuits before client construction."""
+    driver.creds_factory.return_value = None
 
     assert firestore_client.get_mcp_firestore() is None
     # Must short-circuit BEFORE ever building the client.
     driver.client_factory.assert_not_called()
 
 
-def test_returns_none_without_throwing_when_token_empty(
-    driver: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Empty-string token is falsy -> None (JS ``|| ''`` parity)."""
-    monkeypatch.setenv("FIREBASE_REFRESH_TOKEN", "")
-
-    assert firestore_client.get_mcp_firestore() is None
-    driver.client_factory.assert_not_called()
-
-
-def test_constructs_client_with_tenetx_qa_scores_project(
+def test_constructs_client_with_project_and_wif_credentials(
     driver: SimpleNamespace,
 ) -> None:
-    """With env present -> raw firestore.Client built with project tenetx-qa-scores."""
+    """With credentials present -> raw firestore.Client built with project + creds."""
     result = firestore_client.get_mcp_firestore()
 
     assert result is driver.fake_db
     driver.client_factory.assert_called_once()
     _, kwargs = driver.client_factory.call_args
     assert kwargs["project"] == "tenetx-qa-scores"
-    # Credential is the raw google.oauth2 refresh-token credential, NOT firebase_admin.
-    creds = kwargs["credentials"]
-    assert isinstance(creds, firestore_client.Credentials)
-    assert creds.refresh_token == "fake-refresh-token"
+    # Credential is the factory-produced WIF credential, NOT firebase_admin.
+    assert kwargs["credentials"] is driver.fake_creds
 
 
 def test_client_is_memoized_across_calls(driver: SimpleNamespace) -> None:

@@ -1,13 +1,14 @@
 """Tests for app/auth.py — Firebase Admin init + the FastAPI auth dependency,
 ported from tenetx-mimic-backend/src/index.ts:42-134.
 
-No network and no live Firebase project: init is exercised with the credential
-constructor + initialize_app mocked (so the exact authorized_user credential dict
-is asserted without a token exchange), and the dependency is exercised with
-firebase_auth.verify_id_token mocked. The async dependency/handler are driven via
-asyncio.run, so pytest-asyncio is not required. The end-to-end TestClient case is
-skipped when httpx is absent; the direct dependency + handler cases already assert
-the exact Node 401 status codes and byte-compact {"error": ...} bodies.
+No network and no live Firebase project: init is exercised with the keyless
+credential factory (auth.get_google_credentials) + initialize_app mocked (so the
+WIF-adapter credential is asserted without a Keycloak/STS exchange), and the
+dependency is exercised with firebase_auth.verify_id_token mocked. The async
+dependency/handler are driven via asyncio.run, so pytest-asyncio is not required.
+The end-to-end TestClient case is skipped when httpx is absent; the direct
+dependency + handler cases already assert the exact Node 401 status codes and
+byte-compact {"error": ...} bodies.
 """
 from __future__ import annotations
 
@@ -17,8 +18,6 @@ import firebase_admin
 import pytest
 
 from app import auth
-
-REFRESH_TOKEN_ENV = "FIREBASE_REFRESH_TOKEN"
 
 
 def _delete_default_app_if_present() -> None:
@@ -60,37 +59,30 @@ def _run_dependency(headers: dict[str, str]) -> auth.AuthenticatedUser:
 # ---------------------------------------------------------------------------
 # init_firebase_app — plain init smoke tests (no HTTP, no network)
 # ---------------------------------------------------------------------------
-def test_init_returns_none_when_refresh_token_absent(monkeypatch, clean_firebase):
-    monkeypatch.delenv(REFRESH_TOKEN_ENV, raising=False)
+def test_init_returns_none_when_credentials_unconfigured(monkeypatch, clean_firebase):
+    monkeypatch.setattr("app.auth.get_google_credentials", lambda: None)
     assert auth.init_firebase_app() is None
     with pytest.raises(ValueError):
         firebase_admin.get_app()  # warn-and-continue: no default app was created
 
 
-def test_init_wires_authorized_user_credential(monkeypatch, clean_firebase):
-    monkeypatch.setenv(REFRESH_TOKEN_ENV, "test-refresh-token-value")
+def test_init_wires_wif_adapter_credential(monkeypatch, clean_firebase):
+    fake_creds = object()
+    monkeypatch.setattr("app.auth.get_google_credentials", lambda: fake_creds)
     captured: dict[str, object] = {}
-
-    def fake_refresh_token(data):
-        captured["cred_dict"] = data
-        return "FAKE_CRED"
 
     def fake_initialize_app(cred, options):
         captured["cred"] = cred
         captured["options"] = options
         return "FAKE_APP"
 
-    monkeypatch.setattr("app.auth.credentials.RefreshToken", fake_refresh_token)
     monkeypatch.setattr("app.auth.firebase_admin.initialize_app", fake_initialize_app)
 
     assert auth.init_firebase_app() == "FAKE_APP"
-    assert captured["cred_dict"] == {
-        "type": "authorized_user",
-        "client_id": auth.FIREBASE_TOOLS_CLIENT_ID,
-        "client_secret": auth.FIREBASE_TOOLS_CLIENT_SECRET,
-        "refresh_token": "test-refresh-token-value",
-    }
-    assert captured["cred"] == "FAKE_CRED"
+    # The credential is the WIF adapter wrapping the factory's google.auth creds,
+    # NOT a RefreshToken authorized_user credential.
+    assert isinstance(captured["cred"], auth._WifAdminCredential)
+    assert captured["cred"].get_credential() is fake_creds
     assert captured["options"] == {"projectId": "tenetx-qa-scores"}
 
 
@@ -107,8 +99,7 @@ def test_init_is_idempotent_when_app_exists(monkeypatch):
 
 
 def test_init_exits_when_initialize_raises(monkeypatch, clean_firebase):
-    monkeypatch.setenv(REFRESH_TOKEN_ENV, "any-present-value")
-    monkeypatch.setattr("app.auth.credentials.RefreshToken", lambda data: "CRED")
+    monkeypatch.setattr("app.auth.get_google_credentials", lambda: object())
 
     def boom(*_a, **_k):
         raise RuntimeError("initialize_app blew up")

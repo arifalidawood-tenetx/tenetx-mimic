@@ -2,21 +2,19 @@
 construction as ``app/mimic_connections.py``, with its OWN module-level singleton.
 
 The MCP PAT verifier (todo 3) and the ``mimic_*`` tools (todo 4) read Firestore
-(``mcp_tokens``, ``mimic_features``, ``mcp_tool_calls``) with the SAME
-``authorized_user`` refresh-token credential the SAML proxy already uses. This
-module hands them a client built exactly like ``mimic_connections._get_firestore``:
+(``mcp_tokens``, ``mimic_features``, ``mcp_tool_calls``) with the SAME keyless
+Keycloak-OIDC + GCP Workload Identity Federation credentials the SAML proxy uses.
+This module hands them a client built exactly like ``mimic_connections._get_firestore``:
 
-  * a :class:`google.oauth2.credentials.Credentials` from ``FIREBASE_REFRESH_TOKEN``
-    plus firebase-tools' public ``client_id``/``client_secret`` (imported from
-    ``app/auth.py`` — the single source of those constants), then
+  * Google credentials from :func:`app.gcp_credentials.get_google_credentials`
+    (Keycloak ``client_credentials`` → STS exchange via ``subject_token_supplier``),
+    then
   * a RAW ``google.cloud.firestore.Client(project=..., credentials=...)``.
 
 It deliberately does NOT use ``firebase_admin.firestore.client()``: that wrapper
-broadens the credential's OAuth scopes in a way an ``authorized_user`` refresh
-token cannot satisfy, producing a ~300s retry storm / ``restricted_client`` 503
-(documented at length in ``mimic_connections.py``). A raw client with an explicit
-``Credentials`` bypasses that broadening — the only construction proven to work
-with this credential.
+broadens the credential's OAuth scopes in a way the federated credential's scoping
+would fight, and the raw client with explicit ``Credentials`` is the construction
+proven to work (documented at length in ``mimic_connections.py``).
 
 WHY a private singleton here instead of importing ``mimic_connections._db_singleton``
 (Metis N3): ``_db_singleton`` is a private, test-reset implementation detail of the
@@ -26,25 +24,23 @@ imports a name the owning module never exported. The MCP subsystem owns its own
 :data:`_mcp_db_singleton`; the two clients are identical in construction but
 independent in lifetime.
 
-NEVER throws. An unset/empty ``FIREBASE_REFRESH_TOKEN`` resolves to ``None`` (after
-a structured ``warn``) so the verifier can fail-closed cleanly rather than 500. The
-env var is re-checked on EVERY call, independent of the memoized client, so an unset
-token always degrades to ``None`` even after the singleton was built by an earlier
-call with the token present (parity with ``mimic_connections.get_mimic_idp_connection``).
+NEVER throws. Unconfigured Keycloak/WIF credentials resolve to ``None`` (after a
+structured ``warn``) so the verifier can fail-closed cleanly rather than 500. The
+credentials are re-checked on EVERY call, independent of the memoized client, so an
+unconfigured factory always degrades to ``None`` even after the singleton was built
+by an earlier call while configured (parity with
+``mimic_connections.get_mimic_idp_connection``).
+
+Legacy note: this module NO LONGER reads ``FIREBASE_REFRESH_TOKEN`` — the
+authorized_user refresh-token path was removed in favor of keyless WIF.
 """
 from __future__ import annotations
 
-import os
 from typing import Any, Optional
 
 from google.cloud import firestore
-from google.oauth2.credentials import Credentials
 
-from app.auth import (
-    FIREBASE_PROJECT_ID,
-    FIREBASE_TOOLS_CLIENT_ID,
-    FIREBASE_TOOLS_CLIENT_SECRET,
-)
+from app.gcp_credentials import get_google_credentials, get_project_id
 from app.logger import log_event, logger
 
 __all__ = ["get_mcp_firestore"]
@@ -57,27 +53,26 @@ _mcp_db_singleton: Optional[Any] = None
 
 def get_mcp_firestore() -> Optional[Any]:
     """Return a memoized RAW ``google.cloud.firestore.Client`` for the MCP subsystem,
-    or ``None`` when ``FIREBASE_REFRESH_TOKEN`` is unset.
+    or ``None`` when Keycloak/WIF credentials are unconfigured.
 
-    NEVER raises. A missing/empty ``FIREBASE_REFRESH_TOKEN`` resolves to ``None``
-    (after a ``warn``) so the caller (the PAT verifier) fail-closes cleanly. Any
-    unexpected error during client construction is likewise swallowed to ``None``.
+    NEVER raises. Unconfigured credentials resolve to ``None`` (after a ``warn``) so
+    the caller (the PAT verifier) fail-closes cleanly. Any unexpected error during
+    client construction is likewise swallowed to ``None``.
 
-    Builds a :class:`google.oauth2.credentials.Credentials` from the refresh token
-    plus the public firebase-tools ``client_id``/``client_secret``, then hands it to
-    ``firestore.Client(project="tenetx-qa-scores", credentials=...)`` — the same
-    construction as ``mimic_connections`` (NOT ``firebase_admin.firestore``).
+    Builds Google credentials via :func:`get_google_credentials` (Keycloak OIDC +
+    GCP WIF), then hands them to ``firestore.Client(project=..., credentials=...)`` —
+    the same construction as ``mimic_connections`` (NOT ``firebase_admin.firestore``).
     """
     global _mcp_db_singleton
 
-    # Re-checked on EVERY call, independent of the memoized client, so an unset token
-    # always degrades to None even after the singleton was already built.
-    refresh_token = os.environ.get("FIREBASE_REFRESH_TOKEN")
-    if not refresh_token:
+    # Re-checked on EVERY call, independent of the memoized client, so unconfigured
+    # credentials always degrade to None even after the singleton was already built.
+    creds = get_google_credentials()
+    if creds is None:
         log_event(
             logger,
             "warn",
-            "get_mcp_firestore: FIREBASE_REFRESH_TOKEN not set; returning None "
+            "get_mcp_firestore: Google credentials not configured; returning None "
             "(MCP PAT verification will fail-closed).",
         )
         return None
@@ -86,15 +81,8 @@ def get_mcp_firestore() -> Optional[Any]:
         return _mcp_db_singleton
 
     try:
-        creds = Credentials(
-            token=None,
-            refresh_token=refresh_token,
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=FIREBASE_TOOLS_CLIENT_ID,
-            client_secret=FIREBASE_TOOLS_CLIENT_SECRET,
-        )
         _mcp_db_singleton = firestore.Client(
-            project=FIREBASE_PROJECT_ID, credentials=creds
+            project=get_project_id(), credentials=creds
         )
         return _mcp_db_singleton
     except Exception as err:  # noqa: BLE001 — never throw; fail-closed to None

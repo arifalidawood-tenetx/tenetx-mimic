@@ -22,7 +22,7 @@ from app.mcp.auth import McpAccessTokenVerifier
 # Fail-closed Bearer PAT gate: every /mcp request must present a token whose
 # sha256 hash matches an unrevoked, unexpired row in Firestore mcp_tokens.
 # Construction is lazy w.r.t. Firestore (db resolved per-request), so this is
-# safe at import time even when FIREBASE_REFRESH_TOKEN is unset (fail-closed).
+# safe at import time even when Keycloak/WIF credentials are unconfigured (fail-closed).
 mcp: FastMCP = FastMCP(
     name="TenetX Mimic MCP",
     instructions=(

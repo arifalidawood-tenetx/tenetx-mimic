@@ -8,53 +8,42 @@ handlers (todos 9/10) to fetch a per-tester IdP override; it is NOT an
 HTTP-request-scoped auth check, so it deliberately does NOT import
 ``require_tenetx_user`` (mimicConnections.ts is a plain module, not middleware).
 
-NEVER throws. An unset ``FIREBASE_REFRESH_TOKEN``, a missing doc, a doc with no
+NEVER throws. Unconfigured Keycloak/WIF credentials, a missing doc, a doc with no
 ``entity_id``, or ANY Firestore error all resolve to ``None`` (after a warn).
 Callers treat ``None`` as "no per-tester override" and fall back to their existing
 behavior (mimicConnections.ts:58-66).
 
-Firestore-client construction mirrors the Node original exactly and deliberately
+Firestore-client construction mirrors the Node original's intent and deliberately
 does NOT use ``firebase_admin.firestore``:
 
-  * Node builds its own ``@google-cloud/firestore`` client from a
-    ``UserRefreshClient`` because firebase-admin's Firestore wrapper is
-    non-functional with this project's ``authorized_user`` refresh-token credential
-    (mimicConnections.ts:33-52).
-  * The SAME caveat applies in Python (an earlier port wrongly assumed it did not):
-    ``firebase_admin.firestore.client()`` broadens the credential's OAuth scopes
-    internally, which an ``authorized_user`` refresh token cannot satisfy — every
-    read then dies in a ~300s retry storm ending in ``503 ... restricted_client:
-    Unregistered scope(s) ... identitytoolkit ... devstorage.read_write ...
-    datastore``. So we bypass that wrapper and build a RAW
-    ``google.cloud.firestore.Client`` directly from a
-    :class:`google.oauth2.credentials.Credentials` made from the same refresh token
-    plus firebase-tools' public ``client_id``/``client_secret`` (imported from
-    ``app/auth.py`` — the single source of those constants). That is the Python
-    analogue of Node's ``UserRefreshClient`` path and the only construction proven to
-    work with this credential (~0.8s vs the 300s failure).
+  * Node builds its own ``@google-cloud/firestore`` client from an explicit
+    credential because firebase-admin's Firestore wrapper broadens OAuth scopes in a
+    way this project's federated credential fights (mimicConnections.ts:33-52).
+  * So we bypass that wrapper and build a RAW ``google.cloud.firestore.Client``
+    directly from the keyless Google credentials produced by
+    :func:`app.gcp_credentials.get_google_credentials` (Keycloak ``client_credentials``
+    → GCP STS exchange via ``subject_token_supplier``). That is the only construction
+    proven to work with this credential.
 
 :func:`app.auth.init_firebase_app` is still bootstrapped once at startup
 (``app/main.py``) for Firebase Auth ID-token verification on ``/verify-metadata``,
 but this module no longer depends on it for Firestore access.
 
-The env ``FIREBASE_REFRESH_TOKEN`` is re-checked on EVERY call, independent of the
-memoized client, so an unset token always degrades to ``None`` even after the
-singleton was already built by an earlier call with the token present
+The Google credentials are re-resolved on EVERY call, independent of the memoized
+client, so unconfigured credentials always degrade to ``None`` even after the
+singleton was already built by an earlier call while configured
 (mimicConnections.ts:72-81).
+
+Legacy note: this module NO LONGER reads ``FIREBASE_REFRESH_TOKEN`` — the
+authorized_user refresh-token path was removed in favor of keyless WIF.
 """
 from __future__ import annotations
 
-import os
 from typing import Any, Optional, TypedDict
 
 from google.cloud import firestore
-from google.oauth2.credentials import Credentials
 
-from app.auth import (
-    FIREBASE_PROJECT_ID,
-    FIREBASE_TOOLS_CLIENT_ID,
-    FIREBASE_TOOLS_CLIENT_SECRET,
-)
+from app.gcp_credentials import get_google_credentials, get_project_id
 from app.logger import log_event, logger
 
 __all__ = [
@@ -95,32 +84,23 @@ def _coerce_string(value: Any) -> str:
     return value if isinstance(value, str) else ""
 
 
-def _get_firestore(refresh_token: str) -> Any:
+def _get_firestore(credentials: Any) -> Any:
     """Return a memoized RAW ``google.cloud.firestore.Client`` authenticated with the
-    firebase-tools ``authorized_user`` refresh-token credential. Port of
-    ``getFirestore`` (mimicConnections.ts:43-52).
+    keyless Keycloak-OIDC + GCP WIF credentials. Port of ``getFirestore``
+    (mimicConnections.ts:43-52).
 
-    Builds a :class:`google.oauth2.credentials.Credentials` from ``refresh_token``
-    plus the public firebase-tools ``client_id``/``client_secret`` (imported from
-    ``app/auth.py``), then hands it to ``firestore.Client(project=..., credentials=...)``.
+    Hands the credentials produced by :func:`get_google_credentials` to
+    ``firestore.Client(project=..., credentials=...)``.
 
     Deliberately does NOT use ``firebase_admin.firestore.client()``: that wrapper
-    broadens the credential's OAuth scopes in a way an ``authorized_user`` refresh
-    token cannot satisfy, producing a ~300s retry storm / ``restricted_client`` 503.
-    A raw client with an explicit ``Credentials`` bypasses that broadening entirely —
-    the same reason Node uses ``UserRefreshClient`` over firebase-admin's wrapper.
+    broadens the credential's OAuth scopes in a way the federated credential fights.
+    A raw client with an explicit credential bypasses that broadening entirely — the
+    same reason Node uses an explicit credential over firebase-admin's wrapper.
     """
     global _db_singleton
     if _db_singleton is not None:
         return _db_singleton
-    creds = Credentials(
-        token=None,
-        refresh_token=refresh_token,
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=FIREBASE_TOOLS_CLIENT_ID,
-        client_secret=FIREBASE_TOOLS_CLIENT_SECRET,
-    )
-    _db_singleton = firestore.Client(project=FIREBASE_PROJECT_ID, credentials=creds)
+    _db_singleton = firestore.Client(project=get_project_id(), credentials=credentials)
     return _db_singleton
 
 
@@ -129,25 +109,25 @@ def get_mimic_idp_connection(connection_doc_id: str) -> Optional[MimicIdpConnect
     identity, or ``None`` when unavailable. Port of
     ``getMimicIdpConnection`` (mimicConnections.ts:68-119).
 
-    NEVER raises. A missing/empty ``FIREBASE_REFRESH_TOKEN``, a missing doc, a doc
+    NEVER raises. Unconfigured Keycloak/WIF credentials, a missing doc, a doc
     without an ``entity_id``, or ANY Firestore error all resolve to ``None`` (after
     a structured ``warn``).
     """
-    # Re-checked on EVERY call, independent of the memoized client, so an unset
-    # token always degrades to None — even after the singleton was already built by
-    # an earlier call with the token present (mimicConnections.ts:72-81).
-    refresh_token = os.environ.get("FIREBASE_REFRESH_TOKEN")
-    if not refresh_token:
+    # Re-resolved on EVERY call, independent of the memoized client, so unconfigured
+    # credentials always degrade to None — even after the singleton was already built
+    # by an earlier call while configured (mimicConnections.ts:72-81).
+    creds = get_google_credentials()
+    if creds is None:
         log_event(
             logger,
             "warn",
-            "getMimicIdpConnection: FIREBASE_REFRESH_TOKEN not set; returning null "
+            "getMimicIdpConnection: Google credentials not configured; returning null "
             "(no per-tester IdP override).",
         )
         return None
 
     try:
-        db = _get_firestore(refresh_token)
+        db = _get_firestore(creds)
         snap = db.collection(COLLECTION).document(connection_doc_id).get()
 
         # DocumentSnapshot.exists is a bool property; .to_dict() returns the fields

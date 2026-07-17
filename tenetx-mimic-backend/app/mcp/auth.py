@@ -23,10 +23,10 @@ Security posture (the single most important property in this module):
   beyond using it to compute the hash for the lookup.
 
 Firestore is the RAW synchronous ``google.cloud.firestore.Client`` from
-:func:`app.mcp.firestore_client.get_mcp_firestore` (``None`` when
-``FIREBASE_REFRESH_TOKEN`` is unset — which fail-closes here). The blocking query
+:func:`app.mcp.firestore_client.get_mcp_firestore` (``None`` when Keycloak/WIF
+credentials are unconfigured — which fail-closes here). The blocking query
 runs via ``asyncio.to_thread`` under a hard timeout (``_QUERY_TIMEOUT_SECONDS``):
-a stale/expired credential (e.g. an expired ``FIREBASE_REFRESH_TOKEN``) can make
+a stale/expired credential (e.g. an expired federated token) can make
 the underlying grpc auth retry for a long time, and running that inline on the
 event loop previously froze the ENTIRE server — every route, not just
 ``/mcp`` — until it gave up. The timeout bounds that to one fail-closed
@@ -111,7 +111,7 @@ class McpAccessTokenVerifier(TokenVerifier):
             token_hash = self._hash_token(token)
             db = self._db or get_mcp_firestore()
             if db is None:
-                # No Firestore (e.g. FIREBASE_REFRESH_TOKEN unset) -> fail-closed.
+                # No Firestore (e.g. Keycloak/WIF unconfigured) -> fail-closed.
                 return None
 
             query = (

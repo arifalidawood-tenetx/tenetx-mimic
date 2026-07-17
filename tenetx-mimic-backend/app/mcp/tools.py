@@ -19,7 +19,7 @@ AUDIT LOG. Every tool call is recorded, best-effort, into the ``mcp_tool_calls``
 Firestore collection with the SAME field names (camelCase) the frontend
 ``McpToolCall`` interface reads (``tool``, ``client``, ``statusCode``,
 ``durationMs``, ``tokenId``, ``requestSummary``, ``createdAt``). The write is
-best-effort in the strong sense: an unset ``FIREBASE_REFRESH_TOKEN`` (no client),
+best-effort in the strong sense: unconfigured Keycloak/WIF credentials (no client),
 a Firestore error, or a missing auth context can NEVER fail the tool — the failure
 is swallowed to a ``warn`` and the tool's result is returned regardless.
 
@@ -71,7 +71,7 @@ def _record_tool_call(
     """Best-effort write of one ``mcp_tool_calls`` audit row. NEVER raises.
 
     Field names are the camelCase the frontend ``McpToolCall`` interface reads. A
-    missing Firestore client (unset ``FIREBASE_REFRESH_TOKEN``) or ANY write error
+    missing Firestore client (unconfigured Keycloak/WIF) or ANY write error
     is swallowed to a ``warn`` so an audit failure can never fail the tool call.
     """
     try:
