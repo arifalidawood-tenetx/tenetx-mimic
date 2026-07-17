@@ -98,4 +98,10 @@ EXPOSE 3000
 # ["python","-m","app.main"]). Per the plan this exact form is the acceptance
 # criterion Coolify is configured against (todo 13); the HOST override is unused in
 # the container as a result. Discrepancy recorded in the todo-11 evidence/notepad.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "3000"]
+#
+# Proxy headers (todo mcp-proxy-headers-trailing-slash wave 1): Coolify/Traefik is the
+# sole ingress; port 3000 is not host-published; forwarded_allow_ips=* trusts
+# X-Forwarded-* only from docker network peers — acceptable for this topology.
+# Primary MCP bare-path fix is path rewrite (McpPathNormalizeMiddleware); proxy-headers
+# is defense in depth for any leftover redirects.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "3000", "--proxy-headers", "--forwarded-allow-ips", "*"]

@@ -33,6 +33,7 @@ from app.host_resolution import resolve_listen_host
 from app.logger import RequestIdLoggingMiddleware
 from app.mcp.firestore_client import get_mcp_firestore
 from app.mcp.lifespan import get_mcp_http_app
+from app.mcp_path_normalize import McpPathNormalizeMiddleware
 from app.routes.saml_acs import router as saml_acs_router
 from app.routes.saml_login import router as saml_login_router
 from app.routes.saml_logout import router as saml_logout_router
@@ -66,12 +67,12 @@ app = FastAPI(title="tenetx-mimic-backend", version="1.0.0", lifespan=_lifespan)
 # before the routers below; SAML/verify-metadata/health routes are untouched.
 #
 # Starlette's Mount only matches "<prefix>/<rest>" internally, so a bare
-# POST {base}/mcp (no trailing slash) always 307s to {base}/mcp/ first —
-# this is unrelated to the /mcp/mcp bug documented above, and disabling
-# redirect_slashes to "fix" it breaks the mount entirely (307 -> 404,
-# confirmed empirically). 307/308 preserve method+body per HTTP spec, so
-# every compliant client here (httpx, undici/fetch, Python requests)
-# follows it transparently with the body intact.
+# POST {base}/mcp (no trailing slash) would normally 307 to {base}/mcp/ first.
+# However, McpPathNormalizeMiddleware (added below as the outermost middleware)
+# rewrites bare /mcp → /mcp/ in-process for all HTTP methods, so auth-bearing
+# MCP clients never see the 307 and Authorization stays intact. Disabling
+# redirect_slashes would break the mount entirely (307 -> 404), so the in-process
+# rewrite is the correct fix.
 app.mount("/mcp", mcp_http_app)
 
 # CORS — allowlist only the deployed mimic Hosting origin (index.ts:33-40).
@@ -88,6 +89,10 @@ app.add_middleware(
 # the last-added middleware outermost, so this order is what wraps every request
 # incl. CORS-rejected (index.ts:24-25 mounts createHttpLogger() first).
 app.add_middleware(RequestIdLoggingMiddleware)
+
+# MCP path normalization: rewrite bare /mcp → /mcp/ in-process for all HTTP methods.
+# Added AFTER RequestIdLoggingMiddleware so it is outermost and rewrites before Mount.
+app.add_middleware(McpPathNormalizeMiddleware)
 
 # Firebase Admin init (index.ts:57-84): idempotent, shared by todo 4's auth
 # dependency AND todo 7's Firestore client. Handler renders AuthError as the Node
@@ -157,13 +162,20 @@ def ready() -> dict[str, bool | str]:
 
 
 def main() -> None:
-    """Start uvicorn bound to ``resolve_listen_host()`` — parity with the Node host binding."""
+    """Start uvicorn bound to ``resolve_listen_host()`` — parity with the Node host binding.
+
+    Production uses Dockerfile CMD with proxy_headers flags; this main() adds them for
+    local/python -m parity. Coolify Traefik is the sole ingress; port 3000 is not
+    host-published; forwarded_allow_ips=* trusts X-Forwarded-* only from docker network peers.
+    """
     import uvicorn
 
     uvicorn.run(
         "app.main:app",
         host=resolve_listen_host(),
         port=int(os.environ.get("PORT", "3000")),
+        proxy_headers=True,
+        forwarded_allow_ips="*",
     )
 
 
