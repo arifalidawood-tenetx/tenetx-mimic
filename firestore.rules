@@ -1,0 +1,82 @@
+rules_version = '2';
+
+// Firestore security rules for the `tenetx-qa-scores` project. This project is
+// SHARED by two independent products:
+//   - tenetx-qa-scoring/web-ui (reads `runs`, `runs/{id}/categories`, `history`)
+//   - tenetx-mimic (this repo: `mimic_features`, `mimic_idp_connections`,
+//     `mcp_tokens`, `mcp_tool_calls`)
+//
+// INCIDENT NOTE (2026-07-12): a `firebase deploy --only firestore:rules` run
+// from ONLY this repo's (then-incomplete) `firestore.rules` clobbered the
+// live ruleset, wiping every rule below except `mcp_tokens`/`mcp_tool_calls`
+// for several minutes. This file is the MERGE of what was live immediately
+// before that deploy (`runs`/`history`/`mimic_features`/`mimic_idp_connections`,
+// recovered verbatim from the Firebase Rules API's prior ruleset revision)
+// plus the `mcp_tokens`/`mcp_tool_calls` rules added in this repo. Whoever next
+// deploys Firestore rules for this project MUST diff against the CURRENT live
+// ruleset first (Firebase Console -> Firestore -> Rules, or the Rules API) —
+// never blind-deploy a repo copy again, since other products depend on rules
+// this repo's source tree does not contain.
+//
+// Auth model mirrors the backend middleware in
+// tenetx-mimic-backend/app/auth.py (ALLOWED_EMAIL_DOMAIN = "@tenetx.ai";
+// requires a verified Firebase ID token whose email ends with "@tenetx.ai"
+// and whose email_verified claim is true). The regex '.*@tenetx[.]ai$'
+// mirrors Python's str.endswith("@tenetx.ai") — both accept only addresses
+// whose final component is exactly "@tenetx.ai" and reject look-alikes such
+// as "x@nottenetx.ai" or "x@tenetx.ai.evil.com".
+//
+// NOTE: This file must be deployed with
+//   firebase deploy --only firestore:rules
+// by someone holding project credentials before it takes effect in the live
+// Firebase project. Creating/registering it here does NOT make it active.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAuthorizedTenetxUser() {
+      return request.auth != null
+        && request.auth.token.email is string
+        && request.auth.token.email.matches('.*@tenetx[.]ai$')
+        && request.auth.token.email_verified == true;
+    }
+
+    // --- tenetx-qa-scoring/web-ui (restored verbatim from the pre-incident
+    // live ruleset; write is intentionally `false` — these are Python-writer-
+    // only collections, never client-writable) ---
+    match /runs/{runId} {
+      allow read: if isAuthorizedTenetxUser();
+      allow write: if false;
+      match /categories/{catId} {
+        allow read: if isAuthorizedTenetxUser();
+        allow write: if false;
+      }
+    }
+    match /history/{repoId}/scores/{scoreId} {
+      allow read: if isAuthorizedTenetxUser();
+      allow write: if false;
+    }
+
+    // --- tenetx-mimic: mimic_features + mimic_idp_connections (restored
+    // verbatim from the pre-incident live ruleset, same field-shape guards) ---
+    match /mimic_features/{docId} {
+      allow read: if isAuthorizedTenetxUser();
+      allow write: if isAuthorizedTenetxUser()
+        && request.resource.data.keys().hasAll(['ticketId', 'featureSlug', 'attemptNumber', 'title', 'status'])
+        && request.resource.data.ticketId is string
+        && request.resource.data.attemptNumber is int;
+    }
+    match /mimic_idp_connections/{docId} {
+      allow read: if isAuthorizedTenetxUser();
+      allow write: if isAuthorizedTenetxUser()
+        && request.resource.data.keys().hasAll(['provider', 'idpType']);
+    }
+
+    // --- tenetx-mimic: MCP tab (new, added by this repo) ---
+    match /mcp_tokens/{tokenId} {
+      allow read, write: if isAuthorizedTenetxUser();
+    }
+
+    match /mcp_tool_calls/{callId} {
+      allow read, write: if isAuthorizedTenetxUser();
+    }
+  }
+}

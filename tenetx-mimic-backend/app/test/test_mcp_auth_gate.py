@@ -28,6 +28,7 @@ import pytest
 pytest.importorskip("fastmcp")
 
 from fastapi.testclient import TestClient
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 from app.main import app
 
@@ -89,9 +90,24 @@ class _FakeCollection:
         self._snaps = snaps
 
     def where(self, *args: Any, **kwargs: Any) -> _FakeQuery:
-        field = args[0] if args else kwargs.get("field_path")
-        op = args[1] if len(args) > 1 else kwargs.get("op_string")
-        value = args[2] if len(args) > 2 else kwargs.get("value")
+        # Support both positional args and filter= kwarg (FieldFilter).
+        field = None
+        op = None
+        value = None
+        
+        if "filter" in kwargs:
+            # Unwrap FieldFilter(field_path, op_string, value).
+            ff = kwargs["filter"]
+            if isinstance(ff, FieldFilter):
+                field = ff.field_path
+                op = ff.op_string
+                value = ff.value
+        else:
+            # Fallback to positional or field_path/op_string/value kwargs.
+            field = args[0] if args else kwargs.get("field_path")
+            op = args[1] if len(args) > 1 else kwargs.get("op_string")
+            value = args[2] if len(args) > 2 else kwargs.get("value")
+        
         if field == "tokenHash" and op == "==":
             matched = [s for s in self._snaps if s.to_dict().get("tokenHash") == value]
             return _FakeQuery(matched)

@@ -42,3 +42,14 @@ harness/.captured/
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# runners/ dev tooling: local Python venv + streamed dev-server logs (never commit)
+runners/.venv/
+runners/logs/
+
+# tenetx-mimic-backend/ dev venv (bootstrapped by runners/run.ps1 for local `uvicorn` dev runs;
+# separate from the Docker image's own venv, never commit)
+tenetx-mimic-backend/.venv/
+
+.omo
+.omc

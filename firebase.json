@@ -1,1 +1,1 @@
-{"hosting":[{"target":"mimic","public":"dist","rewrites":[{"source":"**","destination":"/index.html"}]}]}
+{"hosting":[{"target":"mimic","public":"dist","rewrites":[{"source":"**","destination":"/index.html"}]}],"firestore":{"rules":"firestore.rules"}}
