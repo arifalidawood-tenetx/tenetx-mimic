@@ -284,11 +284,11 @@ export function SamlConfigPage() {
         <dl className="space-y-1 text-xs">
           <div>
             <dt className="text-ink-faint">SP Entity ID</dt>
-            <dd className="break-all text-ink">https://tenetx-mimic.web.app/saml/metadata</dd>
+            <dd className="break-all text-ink">https://saml-proxy.195.35.23.198.sslip.io/saml/metadata</dd>
           </div>
           <div>
             <dt className="text-ink-faint">ACS URL</dt>
-            <dd className="break-all text-ink">https://tenetx-mimic.web.app/saml/acs</dd>
+            <dd className="break-all text-ink">https://saml-proxy.195.35.23.198.sslip.io/saml/acs</dd>
           </div>
         </dl>
       </div>

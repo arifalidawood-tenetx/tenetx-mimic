@@ -19,6 +19,18 @@
  * card. Every OTHER field (NameID format, signing toggles, and both
  * gotchas) is transcribed byte-for-byte from the runbooks.
  *
+ * SP identity = the backend's own real Coolify deployment domain
+ * (`saml-proxy.195.35.23.198.sslip.io`, app `saml-proxy`), NOT the frontend's
+ * `tenetx-mimic.web.app` Firebase Hosting domain — the backend stays on
+ * Coolify, there is no Firebase Hosting rewrite proxying `/saml/**` to it, so
+ * a `tenetx-mimic.web.app`-registered Keycloak client never matches what the
+ * backend actually sends (confirmed: Keycloak 400s "invalid requester" on
+ * every launch attempt while these constants pointed at the wrong domain).
+ * `app/request_context.py`'s `derive_request_host`/`derive_request_scheme`
+ * (X-Forwarded-Host/Proto-aware) already correctly resolve to this Coolify
+ * domain when the backend is reached through its real Traefik-fronted URL —
+ * no backend code change was needed, only these constants.
+ *
  * Realm/application-name parametrization: the realm (Keycloak) / application
  * name (Authentik) is no longer hardcoded. Call `getIdpGuidance(idpType,
  * realm)` to interpolate the tester's chosen realm into the realm-dependent
@@ -29,16 +41,18 @@
 
 export type IdpType = "keycloak" | "authentik";
 
-/** This mimic's own SP identity — must match `SamlConfigPage.tsx`. */
-export const MIMIC_SP_ENTITY_ID = "https://tenetx-mimic.web.app/saml/metadata";
-export const MIMIC_ACS_URL = "https://tenetx-mimic.web.app/saml/acs";
+/** This mimic's own SP identity — must match `SamlConfigPage.tsx`, and must
+ * match whatever is actually registered as the Keycloak client's Entity
+ * ID/Redirect URI (the backend's real Coolify domain — see module docstring). */
+export const MIMIC_SP_ENTITY_ID = "https://saml-proxy.195.35.23.198.sslip.io/saml/metadata";
+export const MIMIC_ACS_URL = "https://saml-proxy.195.35.23.198.sslip.io/saml/acs";
 /**
  * This mimic's own SAML Single-Logout Service (SLS) endpoint — where an IdP
  * POSTs its LogoutResponse back. Wired on the backend as `GET /saml/sls`
  * (see `tenetx-mimic-backend`, todo 8). Like the SP identity above, this is
  * the mimic's own fixed value and is never user-customizable.
  */
-export const MIMIC_SLS_URL = "https://tenetx-mimic.web.app/saml/sls";
+export const MIMIC_SLS_URL = "https://saml-proxy.195.35.23.198.sslip.io/saml/sls";
 
 /**
  * The realm (Keycloak) / application name (Authentik) assumed when the tester
@@ -167,6 +181,12 @@ const GUIDANCE_BUILDERS: Record<IdpType, (realm: string) => IdpGuidance> = {
       {
         field: "ACS URL",
         value: MIMIC_ACS_URL,
+        note: "Must match this EXACTLY. Authentik compares it against the AuthnRequest's AssertionConsumerServiceURL and returns a 400 (Events → Logs shows configuration_error: \u201cACS URL … doesn't match Provider ACS URL\u201d) on any mismatch — e.g. if you use the tenetx-mimic.web.app frontend origin instead of this saml-proxy backend URL.",
+      },
+      {
+        field: "Service Provider Binding",
+        value: "Post",
+        note: "MUST be Post, not Redirect. On Redirect, authentik sends the SAML Response as a DEFLATE-compressed GET redirect (…/saml/acs?SAMLResponse=…) even though the request asks for HTTP-POST — the POST-only ACS then returns 405 Method Not Allowed, or fails with \u201cInvalid SAML Response. Not match the saml-schema-protocol-2.0.xsd\u201d (compressed bytes aren't valid XML until inflated).",
       },
       {
         field: "Issuer",

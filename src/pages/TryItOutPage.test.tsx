@@ -70,6 +70,9 @@ describe("TryItOutPage", () => {
     mockGetDocs.mockResolvedValue({ empty: true, docs: [] });
     mockSetDoc.mockResolvedValue(undefined);
     window.history.pushState({}, "", "/mimic/try-it-out");
+    // Verify now stashes a per-tab sessionStorage snapshot (the redirect
+    // bridge); clear it so a verify in one test can't rehydrate into the next.
+    sessionStorage.clear();
   });
 
   afterEach(() => {
@@ -519,5 +522,66 @@ describe("TryItOutPage", () => {
     expect(screen.queryByText(/Logged out of/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Logout error —/)).not.toBeInTheDocument();
     expect(window.location.search).toBe("");
+  });
+
+  // --- Redirect bridge + IdP-switch reset ---
+
+  it("re-enables Logout after returning from the IdP via the sessionStorage bridge (general route)", async () => {
+    sessionStorage.setItem(
+      "mimic_tryout_verified_general_keycloak",
+      JSON.stringify({
+        realm: "custom-realm",
+        verified: {
+          entity_id: "https://keycloak.arifalidawood.com/realms/custom-realm",
+          sso_url: "https://keycloak.arifalidawood.com/realms/custom-realm/protocol/saml",
+          slo_url: "https://keycloak.arifalidawood.com/realms/custom-realm/protocol/saml/slo",
+          certificate: "FAKE_CERT_BASE64",
+        },
+      })
+    );
+    const token = encodeStatusToken({
+      status: "validated",
+      email: "tester@example.com",
+      reason: null,
+      iat: Date.now(),
+    });
+    window.history.pushState({}, "", `/mimic/try-it-out?samlStatus=${token}`);
+
+    renderPage();
+
+    await screen.findByText(
+      (_, node) => node?.textContent === "✅ Confirmed — signed in as tester@example.com"
+    );
+    expect(screen.getByRole("button", { name: "Logout" })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "Launch Keycloak login" })).not.toBeDisabled();
+    expect(
+      screen.queryByText("Verify your realm first to enable this button.")
+    ).not.toBeInTheDocument();
+  });
+
+  it("resets verified state and the login banner when switching IdP tabs", async () => {
+    const token = encodeStatusToken({
+      status: "validated",
+      email: "tester@example.com",
+      reason: null,
+      iat: Date.now(),
+    });
+    window.history.pushState({}, "", `/mimic/try-it-out?samlStatus=${token}`);
+    mockSuccessfulVerify();
+
+    renderPage();
+    await screen.findByText(
+      (_, node) => node?.textContent === "✅ Confirmed — signed in as tester@example.com"
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Verify realm" }));
+    await screen.findByText("Verified");
+
+    fireEvent.click(screen.getByRole("button", { name: "Authentik" }));
+
+    expect(screen.queryByText(/Confirmed — signed in/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Verified")).not.toBeInTheDocument();
+    expect(
+      screen.getAllByText("Verify your realm first to enable this button.").length
+    ).toBe(2);
   });
 });

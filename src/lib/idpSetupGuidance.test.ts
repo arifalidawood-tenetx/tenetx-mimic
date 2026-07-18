@@ -41,8 +41,8 @@ describe("getIdpGuidance — realm/app-name interpolation", () => {
     // Realm parametrization must NOT bleed into the mimic's fixed SP identity.
     expect(g.steps.find((s) => s.field === "Client ID")?.value).toBe(MIMIC_SP_ENTITY_ID);
     expect(g.steps.find((s) => s.field === "Valid redirect URIs")?.value).toBe(MIMIC_ACS_URL);
-    expect(MIMIC_SP_ENTITY_ID).toBe("https://tenetx-mimic.web.app/saml/metadata");
-    expect(MIMIC_ACS_URL).toBe("https://tenetx-mimic.web.app/saml/acs");
+    expect(MIMIC_SP_ENTITY_ID).toBe("https://saml-proxy.195.35.23.198.sslip.io/saml/metadata");
+    expect(MIMIC_ACS_URL).toBe("https://saml-proxy.195.35.23.198.sslip.io/saml/acs");
   });
 });
 
@@ -80,13 +80,13 @@ describe("getIdpGuidance — default-case regression (zero drift for tenetx-mimi
       "SP Entity ID goes in Audience, not Issuer",
     );
     expect(IDP_GUIDANCE.keycloak.steps).toHaveLength(7);
-    expect(IDP_GUIDANCE.authentik.steps).toHaveLength(6);
+    expect(IDP_GUIDANCE.authentik.steps).toHaveLength(7);
   });
 });
 
 describe("getIdpGuidance — SLS guidance field", () => {
   it("exposes MIMIC_SLS_URL as the mimic's fixed SLS endpoint", () => {
-    expect(MIMIC_SLS_URL).toBe("https://tenetx-mimic.web.app/saml/sls");
+    expect(MIMIC_SLS_URL).toBe("https://saml-proxy.195.35.23.198.sslip.io/saml/sls");
   });
 
   it("Keycloak slsGuidance points at MIMIC_SLS_URL with the POST-binding field", () => {

@@ -148,6 +148,48 @@ function connectionDocId(ticket: string | undefined, idpType: IdpType): string {
 }
 
 /**
+ * Per-tab `sessionStorage` key (keyed by `connectionDocId`) for the
+ * verified-metadata snapshot that bridges the full-page IdP redirect: the
+ * remount wipes React state and the Firestore hydrate only runs on the ticket
+ * route, so without this the general route forgets the verify and leaves
+ * Logout disabled. Per-tab, unlike the SHARED `general_*` Firestore doc, so
+ * one tester's verify never leaks to another.
+ */
+function verifiedStorageKey(ticket: string | undefined, idpType: IdpType): string {
+  return `mimic_tryout_verified_${connectionDocId(ticket, idpType)}`;
+}
+
+function persistVerified(
+  ticket: string | undefined,
+  idpType: IdpType,
+  realm: string,
+  verified: VerifiedMetadata
+): void {
+  try {
+    sessionStorage.setItem(
+      verifiedStorageKey(ticket, idpType),
+      JSON.stringify({ realm, verified })
+    );
+  } catch {
+    // sessionStorage unavailable/full (private mode, quota) — non-fatal: the
+    // ticket route still rehydrates from Firestore; the general route just
+    // loses the post-redirect Logout re-enable, the pre-fix behavior.
+  }
+}
+
+function readVerified(
+  ticket: string | undefined,
+  idpType: IdpType
+): { realm: string; verified: VerifiedMetadata } | null {
+  try {
+    const raw = sessionStorage.getItem(verifiedStorageKey(ticket, idpType));
+    return raw ? (JSON.parse(raw) as { realm: string; verified: VerifiedMetadata }) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Guided "Try It Out" wizard: pick an IdP, enter the realm/application name
  * you configured it under, follow its exact field values (sourced from
  * `src/lib/idpSetupGuidance.ts`, parametrized by that realm), verify the
@@ -210,6 +252,17 @@ export function TryItOutPage() {
     return () => {
       active = false;
     };
+  }, [ticket, idpType]);
+
+  // Restore the verified snapshot the pre-redirect `persistVerified` stashed
+  // in sessionStorage — runs on every mount (so returning from the IdP
+  // re-enables Logout on the ticket-less general route) and on IdP switch (so
+  // a tab verified earlier this session re-shows as verified).
+  useEffect(() => {
+    const stored = readVerified(ticket, idpType);
+    if (!stored) return;
+    setRealm(stored.realm);
+    setVerifiedMetadata(stored.verified);
   }, [ticket, idpType]);
 
   // On mount, read (never re-verify) any `samlStatus` token the backend's
@@ -316,6 +369,7 @@ export function TryItOutPage() {
       // always a string here, never undefined.
       const verified: VerifiedMetadata = { ...rawVerified, slo_url: rawVerified.slo_url ?? "" };
       setVerifiedMetadata(verified);
+      persistVerified(ticket, idpType, realm, verified);
 
       try {
         await setDoc(
@@ -388,8 +442,25 @@ export function TryItOutPage() {
     window.location.assign(`${SAML_PROXY_URL}/saml/logout?${params.toString()}`);
   }
 
+  // Switching IdP must reset every per-IdP transient (verify result, banners,
+  // inputs) so the previous tab's state — e.g. a Keycloak "Confirmed — signed
+  // in" banner — can't bleed into the newly-selected one; the hydrate effects
+  // then re-restore verified state if that IdP was already verified this
+  // session.
+  function handleIdpChange(next: IdpType) {
+    if (next === idpType) return;
+    setIdpType(next);
+    setVerifiedMetadata(null);
+    setVerifyError(null);
+    setSaveError(null);
+    setLoginBanner(null);
+    setLogoutBanner(null);
+    setAuthentikMetadataUrl("");
+    setRealm(DEFAULT_REALM);
+  }
+
   return (
-    <PageContainer size="narrow" className="space-y-6">
+    <PageContainer size="wide" className="space-y-6">
       <div>
         <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-ink">Try it out</h1>
         <p className="mt-1 text-sm text-ink-muted">
@@ -402,7 +473,7 @@ export function TryItOutPage() {
       <Segmented
         label="Identity provider"
         value={idpType}
-        onChange={setIdpType}
+        onChange={handleIdpChange}
         options={IDP_ORDER.map((id) => ({
           value: id,
           label: getIdpGuidance(id, DEFAULT_REALM).label,

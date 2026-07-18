@@ -310,11 +310,19 @@ describe("AttemptDetailPage", () => {
     renderAt("/mimic/TENQA-29/windows-installer-idempotent-reinstall-fix/1");
 
     await waitFor(() => expect(screen.getByText("Root cause")).toBeInTheDocument());
+    // "tenetx.exe" is highlighted as an inline code chip (see TechnicalCopy /
+    // renderCodeRefs in AttemptDetailPage.tsx), splitting this sentence
+    // across sibling text nodes — match on the paragraph's full textContent
+    // instead of a single exact text node.
     expect(
       screen.getByText(
-        "Expand-Archive -Force deletes then re-extracts tenetx.exe, which fails Access Denied on an Administrators-owned file."
+        (_, node) =>
+          node?.tagName.toLowerCase() === "p" &&
+          node.textContent ===
+            "Expand-Archive -Force deletes then re-extracts tenetx.exe, which fails Access Denied on an Administrators-owned file."
       )
     ).toBeInTheDocument();
+    expect(screen.getByText("tenetx.exe")).toHaveClass("font-mono", "bg-card-3");
     expect(screen.getByText("Diff summary")).toBeInTheDocument();
     expect(
       screen.getByText(

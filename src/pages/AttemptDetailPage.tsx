@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { collection, getDocs, query, where } from "firebase/firestore";
 import { db } from "@/lib/firebaseClient";
@@ -32,6 +32,99 @@ interface SolutionSplit {
   before: string;
   diff: string;
   after: string;
+}
+
+/** Matches inline file/line references like "auth.py:42,824" or
+ * "middleware.py:194-214" inside a technical writeup (`rootCause` /
+ * `diffSummary`), so they can be rendered as monospace chips instead of
+ * blending into the surrounding prose. */
+const CODE_REF_RE = /\b[\w/-]+\.\w{1,5}(?::[\d,-]+)?\b/g;
+
+/** Splits `text` at each `CODE_REF_RE` match, returning plain strings
+ * interleaved with `<code>` chips for the matched refs. */
+function renderCodeRefs(text: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  let lastIndex = 0;
+  CODE_REF_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = CODE_REF_RE.exec(text))) {
+    if (match.index > lastIndex) {
+      nodes.push(text.slice(lastIndex, match.index));
+    }
+    nodes.push(
+      <code
+        key={`${match.index}-${match[0]}`}
+        className="rounded bg-card-3 px-1 py-0.5 font-mono text-xs text-ink"
+      >
+        {match[0]}
+      </code>
+    );
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex));
+  }
+  return nodes;
+}
+
+/** Matches a lettered clause marker like "(A) " or "(B) " — a single
+ * uppercase letter in parens, distinct from parenthetical asides like
+ * "(fixes ...)" which won't match a single-letter capture group. */
+const LETTERED_CLAUSE_RE = /\(([A-Z])\)\s/g;
+
+interface LetteredClause {
+  marker: string;
+  text: string;
+}
+
+/** Splits a multi-part summary like "One combined diff … — (A) …; (B) …"
+ * into a lead-in sentence plus one entry per lettered clause, so a dense
+ * writeup reads as a scannable list instead of one run-on paragraph.
+ * Returns null when fewer than 2 markers are found, so single-clause text
+ * (e.g. most `rootCause` values) falls back to a plain paragraph. */
+function splitLetteredClauses(
+  text: string
+): { lead: string; clauses: LetteredClause[] } | null {
+  const markers = [...text.matchAll(LETTERED_CLAUSE_RE)];
+  if (markers.length < 2) return null;
+
+  const lead = text.slice(0, markers[0].index).replace(/[\s—-]+$/, "");
+  const clauses: LetteredClause[] = markers.map((m, i) => {
+    const start = m.index + m[0].length;
+    const end = i + 1 < markers.length ? markers[i + 1].index : text.length;
+    return {
+      marker: m[1],
+      text: text.slice(start, end).replace(/;\s*$/, "").trim(),
+    };
+  });
+
+  return { lead, clauses };
+}
+
+/** Renders a technical writeup (`rootCause` / `diffSummary`) readably:
+ * inline file/line refs become monospace chips, and text with 2+ lettered
+ * clauses ("(A) …; (B) …") becomes a lead-in sentence plus a bullet list
+ * instead of one dense paragraph. */
+function TechnicalCopy({ text }: { text: string }) {
+  const split = splitLetteredClauses(text);
+
+  if (split) {
+    return (
+      <div className="space-y-2 text-sm leading-relaxed text-ink-muted">
+        {split.lead && <p>{renderCodeRefs(split.lead)}</p>}
+        <ul className="space-y-1.5">
+          {split.clauses.map((clause) => (
+            <li key={clause.marker} className="flex gap-2">
+              <span className="shrink-0 font-semibold text-ink-faint">({clause.marker})</span>
+              <span>{renderCodeRefs(clause.text)}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+
+  return <p className="text-sm leading-relaxed text-ink-muted">{renderCodeRefs(text)}</p>;
 }
 
 /**
@@ -206,15 +299,29 @@ export function AttemptDetailPage() {
         </div>
       )}
 
-      {doc.jiraUrl && (
-        <a
-          href={doc.jiraUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="text-sm text-accent underline"
-        >
-          View {doc.ticketId} in Jira
-        </a>
+      {(doc.jiraUrl || feature === "saml-login-fix") && (
+        <div className="flex flex-wrap items-center gap-3 px-1 py-1">
+          {doc.jiraUrl && (
+            <a
+              href={doc.jiraUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="focus-ring inline-flex h-10 items-center rounded-lg px-3.5 text-sm text-accent underline transition-colors hover:bg-card-2"
+            >
+              View {doc.ticketId} in Jira
+            </a>
+          )}
+
+          {feature === "saml-login-fix" && (
+            <Link
+              to={`/mimic/${ticket}/try-it-out`}
+              className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-accent px-3.5 text-sm font-medium text-on-accent shadow-sm transition hover:brightness-110 active:scale-[0.98]"
+            >
+              <Icon name="zap" className="h-4 w-4 shrink-0" />
+              Try it out
+            </Link>
+          )}
+        </div>
       )}
 
       {feature === "saml-config" && (
@@ -223,22 +330,10 @@ export function AttemptDetailPage() {
         </div>
       )}
 
-       {feature === "saml-login-fix" && (
-         <div className="space-y-4">
-           <Link
-             to={`/mimic/${ticket}/try-it-out`}
-             className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-accent px-3.5 text-sm font-medium text-on-accent shadow-sm transition hover:brightness-110 active:scale-[0.98]"
-           >
-             <Icon name="zap" className="h-4 w-4 shrink-0" />
-             Try it out
-           </Link>
-
-          {doc.notes && (
-            <div className="rounded-xl bg-card-2 p-4 ring-1 ring-line shadow-sm hover:shadow-md transition-shadow space-y-2">
-              <SectionHeader icon="check">Live verification</SectionHeader>
-              <p className="text-sm text-ink-muted whitespace-pre-wrap">{doc.notes}</p>
-            </div>
-          )}
+      {feature === "saml-login-fix" && doc.notes && (
+        <div className="rounded-xl bg-card-2 p-4 ring-1 ring-line shadow-sm hover:shadow-md transition-shadow space-y-2">
+          <SectionHeader icon="check">Live verification</SectionHeader>
+          <p className="text-sm text-ink-muted whitespace-pre-wrap">{doc.notes}</p>
         </div>
       )}
 
@@ -247,14 +342,14 @@ export function AttemptDetailPage() {
           {doc.rootCause && (
             <div className="rounded-xl bg-card-2 p-4 ring-1 ring-line shadow-sm hover:shadow-md transition-shadow space-y-2">
               <SectionHeader icon="alert">Root cause</SectionHeader>
-              <p className="text-sm text-ink-muted max-w-prose">{doc.rootCause}</p>
+              <TechnicalCopy text={doc.rootCause} />
             </div>
           )}
 
           {doc.diffSummary && (
             <div className="rounded-xl bg-card-2 p-4 ring-1 ring-line shadow-sm hover:shadow-md transition-shadow space-y-2">
               <SectionHeader icon="layers">Diff summary</SectionHeader>
-              <p className="text-sm text-ink-muted max-w-prose">{doc.diffSummary}</p>
+              <TechnicalCopy text={doc.diffSummary} />
             </div>
           )}
 
