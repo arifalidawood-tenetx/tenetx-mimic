@@ -1,44 +1,40 @@
 @import "tailwindcss";
 
-/* Allow a `dark:` escape hatch without coupling components to mode logic.
-   In practice components consume semantic tokens only. */
-@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
-
 /* ──────────────────────────────────────────────────────────────────────────
-   DESIGN TOKENS — single source of truth. Ported verbatim from
-   tenetx-qa-scoring/web-ui/src/index.css so components shared with that app
-   (AuthGate, ui.tsx, icons.tsx) render identically.
-   color-scheme is driven by [data-theme] on <html>. All chromatic values are
-   expressed with light-dark(), so ONLY color values swap between modes —
-   there is never mode-conditional logic inside components.
-   Dark is primary: soft #0A base, surfaces stepped 3–6% lighter (elevation). */
+   DESIGN TOKENS — single source of truth. Dark-only palette ported from
+   grokv1 (tenetx-mimic-simulation-dashboard-grokv1/src/app/globals.css) onto
+   the existing semantic var names used across this codebase (ui.tsx,
+   icons.tsx, all pages). There is no light mode — color-scheme is hardcoded
+   to dark and every token below is a single flat value. */
 :root {
-  color-scheme: light dark;
+  color-scheme: dark;
 
   /* Stepped surfaces — each layer slightly lighter than its parent. */
-  --surface-0: light-dark(#f8fafc, #020617); /* app canvas */
-  --surface-1: light-dark(#ffffff, #0f172a); /* cards */
-  --surface-2: light-dark(#ffffff, #0f172a); /* nested / table heads */
-  --surface-3: light-dark(#fbfbfd, #1a1f28); /* inset panels */
-  --surface-overlay: light-dark(#ffffff, #20262f); /* drawer / popover */
+  --surface-0: #09090b; /* app canvas */
+  --surface-1: #18181b; /* cards */
+  --surface-2: #18181b; /* nested / table heads */
+  --surface-3: #27272a; /* inset panels */
+  --surface-overlay: #27272a; /* drawer / popover */
 
-  /* Per-mode tuned ink — lighter weights/contrast on dark. */
-  --ink: light-dark(#13161c, #e9ecf2);
-  --ink-muted: light-dark(#64748b, #94a3b8);
-  /* tuned to clear 4.5:1 even at the tertiary/meta level, per mode */
-  --ink-faint: light-dark(#6b7280, #7b828d);
+  /* Ink scale. */
+  --ink: #fafafa;
+  --ink-muted: #a1a1aa;
+  --ink-faint: #71717a;
 
-  /* Hairline edges (used sparingly — elevation does the work in dark). */
-  --line: light-dark(#e2e8f0, #1e293b);
-  --line-strong: light-dark(#d3d7de, rgba(255, 255, 255, 0.14));
+  /* Hairline edges. */
+  --line: #27272a;
+  --line-strong: #1f1f23;
 
-  /* Status colours — tuned independently per mode for contrast. */
-  --success: light-dark(#0c8a5a, #34d399);
-  --warning: light-dark(#b4690a, #fbbf24);
-  --danger: light-dark(#cf2738, #f87171);
+  /* Status colours. */
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #f87171;
+  --info: #60a5fa;
 
   /* The single interactive accent (deliberately not purple). */
-  --accent: light-dark(#2563eb, #3b82f6);
+  --accent: #22d3ee;
+  /* Readable text/icon color on top of --accent (previously undefined). */
+  --on-accent: #09090b;
 
   /* Soft tints derived from the tokens above (no duplicated hex). */
   --success-soft: color-mix(in srgb, var(--success) 14%, transparent);
@@ -46,17 +42,10 @@
   --danger-soft: color-mix(in srgb, var(--danger) 14%, transparent);
   --accent-soft: color-mix(in srgb, var(--accent) 15%, transparent);
 
-  /* Elevation shadows — soft in dark, hairline drop in light. */
-  --shadow-sm: light-dark(0 1px 2px rgb(17 20 26 / 0.06), 0 1px 0 rgb(0 0 0 / 0.4));
-  --shadow-md: light-dark(0 4px 14px rgb(17 20 26 / 0.08), 0 10px 30px rgb(0 0 0 / 0.4));
-  --shadow-lg: light-dark(0 18px 50px rgb(17 20 26 / 0.16), 0 24px 70px rgb(0 0 0 / 0.55));
-}
-
-:root[data-theme="dark"] {
-  color-scheme: dark;
-}
-:root[data-theme="light"] {
-  color-scheme: light;
+  /* Elevation shadows — dark-mode values only. */
+  --shadow-sm: 0 1px 0 rgb(0 0 0 / 0.4);
+  --shadow-md: 0 10px 30px rgb(0 0 0 / 0.4);
+  --shadow-lg: 0 24px 70px rgb(0 0 0 / 0.55);
 }
 
 /* Map semantic variables into Tailwind's token namespace so components get
@@ -78,6 +67,7 @@
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-danger: var(--danger);
+  --color-info: var(--info);
   --color-accent: var(--accent);
 
   --color-success-soft: var(--success-soft);
@@ -94,8 +84,8 @@
 
 /* Static (non-inline) tokens: typography + motion. */
 @theme {
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -165,6 +155,15 @@
   .animate-fade {
     animation: fade 0.3s ease both;
   }
+  .animate-shimmer {
+    animation: shimmer 2s infinite;
+  }
+  .animate-slide-up {
+    animation: slide-up 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .animate-scale-in {
+    animation: scale-in 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
   @keyframes rise {
     from {
       opacity: 0;
@@ -182,6 +181,51 @@
     to {
       opacity: 1;
     }
+  }
+  @keyframes shimmer {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(100%);
+    }
+  }
+  @keyframes slide-up {
+    0% {
+      transform: translateY(8px);
+      opacity: 0;
+    }
+    100% {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+  @keyframes scale-in {
+    0% {
+      transform: scale(0.95);
+      opacity: 0;
+    }
+    100% {
+      transform: scale(1);
+      opacity: 1;
+    }
+  }
+
+  .glass-surface {
+    background: hsl(240 5% 10% / 0.75);
+    backdrop-filter: blur(16px) saturate(120%);
+    border: 1px solid hsl(240 5% 20% / 0.6);
+  }
+
+  /* Chevron Trail breadcrumb — clip-path shapes (see Breadcrumb.tsx). */
+  .crumb-chevron {
+    clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 0 100%, 10px 50%);
+  }
+  .crumb-chevron-first {
+    clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 0 100%);
+  }
+  .crumb-chevron-last {
+    clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, 10px 50%);
   }
 }
 

@@ -11,14 +11,19 @@
     "seed:ten135": "tsx scripts/seed-ten135-attempt.ts",
     "seed:ten135:admin": "tsx scripts/seed-ten135-admin.ts",
     "seed:ten141:admin": "tsx scripts/seed-ten141-admin.ts",
-    "seed:tenqa17:admin": "tsx scripts/seed-tenqa17-admin.ts"
+    "seed:tenqa17:admin": "tsx scripts/seed-tenqa17-admin.ts",
+    "seed:tenqa29:admin": "tsx scripts/seed-tenqa29-admin.ts",
+    "seed:tenqa45:admin": "tsx scripts/seed-tenqa45-admin.ts"
   },
   "dependencies": {
+    "@fontsource/inter": "^5.2.8",
+    "@fontsource/jetbrains-mono": "^5.2.8",
     "@google-cloud/firestore": "^8.6.0",
     "clsx": "2.1.1",
     "firebase": "^12.15.0",
     "firebase-admin": "^14.1.0",
     "google-auth-library": "^10.9.0",
+    "lucide-react": "^1.24.0",
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "react-router-dom": "^7.18.1",

@@ -11,7 +11,7 @@ import {
   isSignInWithEmailLink,
   onAuthStateChanged,
   signInWithEmailLink,
-  signOut,
+  signOut as firebaseSignOut,
   type User,
 } from "firebase/auth";
 import { auth } from "./firebaseClient";
@@ -31,6 +31,7 @@ interface AuthContextValue {
   user: User | null;
   /** Clears the "unauthorized" state so the sign-in forms show again. */
   retry: () => void;
+  signOut: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -73,7 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         rejectedRef.current = true;
         setUser(null);
         setStatus("unauthorized");
-        void signOut(auth);
+        void firebaseSignOut(auth);
         return;
       }
 
@@ -113,7 +114,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const value = useMemo<AuthContextValue>(
-    () => ({ status, user, retry }),
+    () => ({ status, user, retry, signOut: () => firebaseSignOut(auth) }),
     [status, user]
   );
 

@@ -91,7 +91,6 @@ describe("AuthGate — domain-allow (scenarios b, c)", () => {
     fire(fakeUser("arif.dawood@tenetx.ai", "password"));
 
     expect(await screen.findByText("Dashboard content")).toBeInTheDocument();
-    expect(screen.getByText("Super Admin")).toBeInTheDocument();
   });
 
   it("(c) renders dashboard without Super Admin badge for a non-admin @tenetx.ai email", async () => {
@@ -104,7 +103,6 @@ describe("AuthGate — domain-allow (scenarios b, c)", () => {
     fire(fakeUser("someone.else@tenetx.ai", "password"));
 
     expect(await screen.findByText("Dashboard content")).toBeInTheDocument();
-    expect(screen.queryByText("Super Admin")).not.toBeInTheDocument();
   });
 });
 

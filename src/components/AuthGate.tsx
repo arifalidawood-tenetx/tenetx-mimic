@@ -8,10 +8,10 @@ import {
   signInWithPopup,
 } from "firebase/auth";
 import { auth } from "@/lib/firebaseClient";
-import { ALLOWED_EMAIL_DOMAIN, SUPER_ADMIN_EMAIL, isAllowedEmail } from "@/lib/auth";
+import { ALLOWED_EMAIL_DOMAIN, isAllowedEmail } from "@/lib/auth";
 import { AuthProvider, EMAIL_LINK_STORAGE_KEY, useAuthState } from "@/lib/authState";
 import { cn } from "@/utils/cn";
-import { Badge, Button, Segmented, Spinner } from "./ui";
+import { Button, Segmented, Spinner } from "./ui";
 import { Icon } from "./icons";
 
 type Notice = { tone: "error" | "success"; text: string } | null;
@@ -441,17 +441,6 @@ function LoadingScreen() {
   );
 }
 
-/* ── Authorized top bar + gate ────────────────────────────────────────────── */
-function AuthorizedTopBar({ email }: { email: string }) {
-  const isSuperAdmin = email === SUPER_ADMIN_EMAIL;
-  return (
-    <div className="flex items-center justify-end gap-2 border-b border-line bg-card px-4 py-1.5 text-xs text-ink-muted">
-      {isSuperAdmin && <Badge tone="accent">Super Admin</Badge>}
-      <span>{email}</span>
-    </div>
-  );
-}
-
 function AuthGateInner({ children }: { children: ReactNode }) {
   const { status, user } = useAuthState();
 
@@ -460,12 +449,7 @@ function AuthGateInner({ children }: { children: ReactNode }) {
   if (status === "unverified") return <VerifyEmailScreen />;
   if (status === "signed-out" || !user) return <SignInScreen />;
 
-  return (
-    <div className="flex min-h-screen flex-col">
-      <AuthorizedTopBar email={user.email ?? ""} />
-      <div className="flex-1">{children}</div>
-    </div>
-  );
+  return <div className="flex min-h-screen flex-col">{children}</div>;
 }
 
 /**
